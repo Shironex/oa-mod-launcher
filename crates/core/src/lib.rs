@@ -11,6 +11,7 @@ pub mod error;
 pub mod files;
 pub mod game;
 pub mod inspect;
+pub mod install;
 pub mod launcher;
 pub mod layout;
 pub mod manifest;

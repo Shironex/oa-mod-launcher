@@ -54,6 +54,9 @@ impl BepInEx {
 pub struct Facts {
     /// What kind of BepInEx is there.
     pub bepinex: BepInEx,
+    /// The SHA-256 of `BepInEx/core/BepInEx.Unity.IL2CPP.dll`, when it is
+    /// there: which build this is.
+    pub probe_sha256: Option<String>,
     /// The SHA-256 of the mod DLL, when there is one.
     pub mod_sha256: Option<String>,
     /// The names in `BepInEx/plugins` that are not the mod, sorted.
@@ -95,8 +98,10 @@ pub fn inspect(root: &Path, state: &State, reference: Option<&manifest::BepInEx>
         _ => false,
     };
 
+    let (bepinex, probe_sha256) = classify(root, state, reference)?;
     Ok(Facts {
-        bepinex: classify(root, state, reference)?,
+        bepinex,
+        probe_sha256,
         mod_sha256,
         foreign_plugins: foreign_plugins(root)?,
         interop_ready: ready.is_file(),
@@ -108,7 +113,11 @@ fn modified(path: &Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(path).ok()?.modified().ok()
 }
 
-fn classify(root: &Path, state: &State, reference: Option<&manifest::BepInEx>) -> Result<BepInEx> {
+fn classify(
+    root: &Path,
+    state: &State,
+    reference: Option<&manifest::BepInEx>,
+) -> Result<(BepInEx, Option<String>)> {
     let core = files::inside(root, paths::CORE)?;
     let dotnet = files::inside(root, paths::DOTNET)?;
     let winhttp = files::inside(root, paths::WINHTTP)?;
@@ -116,12 +125,15 @@ fn classify(root: &Path, state: &State, reference: Option<&manifest::BepInEx>) -
     let probe = files::inside(root, paths::PROBE)?;
 
     if !core.exists() && !dotnet.exists() && !winhttp.exists() && !doorstop.exists() {
-        return Ok(BepInEx::Absent);
+        return Ok((BepInEx::Absent, None));
     }
     let unsupported = |reason: &str| {
-        Ok(BepInEx::Unsupported {
-            reason: reason.to_owned(),
-        })
+        Ok((
+            BepInEx::Unsupported {
+                reason: reason.to_owned(),
+            },
+            None,
+        ))
     };
     if !probe.is_file() {
         return if core.exists() {
@@ -145,23 +157,24 @@ fn classify(root: &Path, state: &State, reference: Option<&manifest::BepInEx>) -
     }
 
     let on_disk = files::sha256_file(&probe)?.1;
-    if let Some(record) = &state.bepinex
+    let kind = if let Some(record) = &state.bepinex
         && record.probe_sha256 == on_disk
     {
         let label = record.label.clone();
-        return Ok(match record.owner {
+        match record.owner {
             Owner::Launcher => BepInEx::Ours { label },
             Owner::Adopted => BepInEx::Adopted { label },
-        });
-    }
-    if let Some(reference) = reference
+        }
+    } else if let Some(reference) = reference
         && reference.probe_sha256 == on_disk
     {
-        return Ok(BepInEx::Adopted {
+        BepInEx::Adopted {
             label: reference.label.clone(),
-        });
-    }
-    Ok(BepInEx::Foreign)
+        }
+    } else {
+        BepInEx::Foreign
+    };
+    Ok((kind, Some(on_disk)))
 }
 
 /// The names in `BepInEx/plugins` other than the mod's own folder.
@@ -260,6 +273,7 @@ mod tests {
             facts,
             Facts {
                 bepinex: BepInEx::Absent,
+                probe_sha256: None,
                 mod_sha256: None,
                 foreign_plugins: Vec::new(),
                 interop_ready: false,

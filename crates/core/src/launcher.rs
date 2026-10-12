@@ -350,7 +350,6 @@ pub struct Launcher {
     pub(crate) config: Config,
     pub(crate) client: reqwest::Client,
     inner: Mutex<Inner>,
-    #[expect(dead_code, reason = "used by the install and removal steps")]
     busy: Arc<AtomicBool>,
 }
 
@@ -367,7 +366,6 @@ struct Inner {
 
 /// Held while an install or a removal is in progress. Dropping it frees the
 /// launcher for the next one and ends the activity, on every path out.
-#[expect(dead_code, reason = "used by the install and removal steps")]
 pub(crate) struct Lease<'a>(&'a Launcher);
 
 impl Drop for Lease<'_> {
@@ -698,7 +696,6 @@ impl Launcher {
 
     /// The game folder, once everything that must hold before a write holds:
     /// it is the game, Steam is not busy with it, and it is not running.
-    #[expect(dead_code, reason = "used by the install and removal steps")]
     pub(crate) fn writable_game(&self) -> Result<Located> {
         let located = self.locate(&self.state()?)?;
         if located.steam_busy {
@@ -709,7 +706,6 @@ impl Launcher {
     }
 
     /// Asked again right before the first write of every step.
-    #[expect(dead_code, reason = "used by the install and removal steps")]
     pub(crate) fn refuse_while_running(&self, root: &Path) -> Result<()> {
         if (self.config.running)(root) {
             Err(CoreError::GameRunning)
@@ -718,12 +714,10 @@ impl Launcher {
         }
     }
 
-    #[expect(dead_code, reason = "used by the install and removal steps")]
     pub(crate) fn set_activity(&self, activity: Activity) {
         self.lock().activity = activity;
     }
 
-    #[expect(dead_code, reason = "used by the install and removal steps")]
     pub(crate) fn lease(&self, activity: Activity) -> Result<Lease<'_>> {
         if self.busy.swap(true, Ordering::AcqRel) {
             return Err(CoreError::Busy);
