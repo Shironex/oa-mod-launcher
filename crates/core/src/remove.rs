@@ -51,6 +51,7 @@ const MOD_FILES: [&str; 4] = [
 
 /// What kind of thing a foreign item is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "snake_case")]
 pub enum ForeignKind {
     /// Something in `BepInEx/plugins` that is not the mod.
@@ -65,17 +66,20 @@ pub enum ForeignKind {
 /// Something in the BepInEx folder that somebody else put there. A full
 /// removal copies it to the backup folder before it deletes it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct ForeignItem {
     /// Where it is, relative to the game folder, with `/` between the parts.
     pub path: String,
     /// What kind of thing it is.
     pub kind: ForeignKind,
     /// Its size in bytes, everything in it for a folder.
+    #[cfg_attr(feature = "specta", specta(type = f64))]
     pub bytes: u64,
 }
 
 /// What a removal would do, for the window to show before it asks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct RemovalPlan {
     /// The game folder, as it is shown to a person.
     pub game_dir: String,
@@ -106,6 +110,7 @@ pub struct RemovalPlan {
 
 /// What a full removal did.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct RemovalOutcome {
     /// What the window should show now.
     pub snapshot: Snapshot,

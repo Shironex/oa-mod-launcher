@@ -17,6 +17,7 @@ use crate::state::{Owner, State};
 
 /// What kind of BepInEx the game folder holds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BepInEx {
     /// None at all.

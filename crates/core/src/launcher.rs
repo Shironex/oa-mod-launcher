@@ -123,6 +123,7 @@ pub fn open_with_system(address: &str) -> std::io::Result<()> {
 
 /// The step an install is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
     /// The manifest is read and the game folder is looked at.
@@ -141,12 +142,15 @@ pub enum Phase {
 
 /// One progress report of an install.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct Progress {
     /// The current step.
     pub phase: Phase,
     /// Bytes received so far in this step.
+    #[cfg_attr(feature = "specta", specta(type = f64))]
     pub received: u64,
     /// Bytes this step expects. 0 for a step that downloads nothing.
+    #[cfg_attr(feature = "specta", specta(type = f64))]
     pub total: u64,
 }
 
@@ -163,6 +167,7 @@ pub enum Activity {
 
 /// The one thing the window shows as its main state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Status {
     /// The launcher's own settings or the game folder cannot be read.
@@ -249,6 +254,7 @@ pub fn status(facts: &StatusFacts) -> Status {
 
 /// What the last update check found.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Remote {
     /// No check has finished yet.
@@ -266,6 +272,7 @@ pub enum Remote {
         version: String,
         /// The size of the download in bytes, BepInEx included when it is
         /// not there yet.
+        #[cfg_attr(feature = "specta", specta(type = f64))]
         size: u64,
     },
     /// The release needs a newer launcher than this one.
@@ -277,6 +284,7 @@ pub enum Remote {
 
 /// Something the player should know that stops nothing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Warning {
     /// The installed game build is not one the mod was tried with.
@@ -300,6 +308,7 @@ pub enum Warning {
 
 /// The game folder the launcher works on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct GameInfo {
     /// The folder, as it is shown to a person.
     pub dir: String,
@@ -313,6 +322,7 @@ pub struct GameInfo {
 
 /// Everything the window shows, at one moment.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct Snapshot {
     /// The version of this launcher.
     pub launcher_version: String,
