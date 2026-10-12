@@ -498,7 +498,7 @@ function withRemote(core: Core, snapshot: Snapshot, checking: boolean): Core {
         ...core.notes,
         {
           label: 'Offline',
-          text: `Could not look for a newer OA Mod. What is installed still works. ${sentence(remote.reason)}`,
+          text: `${sentence(remote.reason)} What is installed still works.`,
         },
       ],
     };
