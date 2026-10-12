@@ -46,6 +46,15 @@ winreg = "0.55"
 
 tauri = { version = "2.11", features = [] }
 tauri-build = "2"
+tauri-plugin-single-instance = "2.4"
+# The folder picker. Called from Rust only: the page has no permission for it.
+# Held on the 2.7 line: 2.8 needs Rust 1.90.
+tauri-plugin-dialog = "~2.7"
+# Exact pins: these are release candidates, and a floating one would generate
+# different bindings on two machines.
+specta = { version = "=2.0.0-rc.25", features = ["derive"] }
+specta-typescript = "=0.0.12"
+tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
