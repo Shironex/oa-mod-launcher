@@ -324,13 +324,20 @@ pub(crate) fn sha256(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// A zip holding `entries`, as bytes.
+/// A zip holding `entries`, as bytes. A name that ends in `/` becomes a
+/// folder entry without content, as the real BepInEx zip has them.
 pub(crate) fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
     use std::io::Write;
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
     for (name, body) in entries {
+        if name.ends_with('/') {
+            writer
+                .add_directory(*name, options)
+                .expect("a folder entry");
+            continue;
+        }
         writer.start_file(*name, options).expect("start an entry");
         writer.write_all(body).expect("write an entry");
     }

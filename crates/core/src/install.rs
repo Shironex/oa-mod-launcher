@@ -576,6 +576,83 @@ mod tests {
         assert!(!game.join(paths::INSTALL_READY).exists());
     }
 
+    /// The real BepInEx zip, unpacked, checked and placed the way an install
+    /// does it, into a temporary folder that stands in for the game.
+    ///
+    /// Ignored: it needs the 34 MB zip, which is not in the repository. Run:
+    ///
+    /// ```sh
+    /// OA_MOD_BEPINEX_ZIP=<path to the zip> cargo test -p oa-mod-launcher-core --lib -- --ignored the_real_bepinex_zip
+    /// ```
+    #[test]
+    #[ignore = "needs the real BepInEx zip, named by OA_MOD_BEPINEX_ZIP"]
+    fn the_real_bepinex_zip_unpacks_passes_the_check_and_is_placed() {
+        let zip = std::env::var_os("OA_MOD_BEPINEX_ZIP")
+            .map(PathBuf::from)
+            .expect("OA_MOD_BEPINEX_ZIP names the zip");
+        let (size, sha256) = files::sha256_file(&zip).expect("the zip is readable");
+        assert_eq!(size, 34_336_405);
+        assert_eq!(
+            sha256,
+            "f4cc496bd098a0df4164b81e3737297707f13a47c2478dba2f60eefab784817a"
+        );
+        // What `bepinex.json` of the mod repository says about build be.788.
+        let expected = manifest::BepInEx {
+            label: "6.0.0-be.788".to_owned(),
+            url: String::new(),
+            size,
+            sha256,
+            probe_sha256: "46cf1ef802bdf8cb6587fc1e4d98f7af1073a60487b39a64e230e6f6e4c23aec"
+                .to_owned(),
+            root_files: [
+                (
+                    "winhttp.dll",
+                    "8c6cdbc38836dee87e3368f5de1994d7c0ccebf29e4ce7aba3c0981f9375412c",
+                ),
+                (
+                    "doorstop_config.ini",
+                    "7daebb02054747faee66c875a778e0e8d54dad24dd460e1fb69aa31378d9ea8f",
+                ),
+                (
+                    ".doorstop_version",
+                    "75a2f501000d4fe28f74bc7ee66dae5581959d28b6c44f0c1b0c05cd5ba261e6",
+                ),
+                (
+                    "changelog.txt",
+                    "7020270524c1788cd3e7af2cba8a4f2e4bcc9f7fcb522679a1221fe2bb34bc4f",
+                ),
+            ]
+            .into_iter()
+            .map(|(name, sha256)| (name.to_owned(), sha256.to_owned()))
+            .collect(),
+        };
+
+        let (_temp, base) = canonical_temp();
+        let unpacked = base.join("unpacked");
+        let game = base.join("game");
+        std::fs::create_dir(&game).expect("the game");
+
+        archive::extract(&zip, &unpacked).expect("the real zip unpacks");
+        check_unpacked(&unpacked, &expected).expect("the real zip is what the manifest names");
+        let files_in = |dir: &Path| files::scan_tree(dir).expect("a scan").files.len();
+        let unpacked_files = files_in(&unpacked);
+        place(&unpacked, &game, &allowed).expect("the real zip is placed");
+
+        // The zip holds no file outside what is placed, so nothing is lost.
+        assert_eq!(files_in(&game), unpacked_files);
+        for there in [
+            paths::PROBE,
+            paths::DOTNET_PROOF,
+            paths::WINHTTP,
+            paths::DOORSTOP_CONFIG,
+        ] {
+            assert!(game.join(there).is_file(), "{there}");
+        }
+        assert!(!game.join(paths::PLUGINS).exists());
+        assert!(!game.join(paths::INSTALL_READY).exists());
+        println!("{unpacked_files} files unpacked, checked and placed");
+    }
+
     #[test]
     fn an_install_whose_last_move_was_made_is_not_taken_back() {
         let (_temp, base) = canonical_temp();

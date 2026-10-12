@@ -115,6 +115,39 @@ async fn a_fresh_install_puts_bepinex_and_the_mod_into_the_game_folder() {
     assert_eq!(launcher.refresh().status, Status::UpToDate);
 }
 
+/// The real zip names three folders without content: `BepInEx/`, and the
+/// empty `BepInEx/plugins/` and `BepInEx/patchers/`. They are no file outside
+/// `BepInEx/core`, so they stop nothing, and none of them is carried over.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_empty_folder_entries_of_the_real_zip_do_not_stop_an_install() {
+    let sandbox = Sandbox::new();
+    let server = TestServer::start().await;
+    let mut release = Release::new("0.1.0");
+    let mut entries: Vec<(&str, &[u8])> = vec![
+        ("BepInEx/", b""),
+        ("BepInEx/plugins/", b""),
+        ("BepInEx/patchers/", b""),
+    ];
+    entries.extend(BEPINEX_FILES);
+    release.zip = zip_of(&entries);
+    server.publish(&release);
+    let launcher = Launcher::open(sandbox.config(&server)).expect("the launcher opens");
+
+    let installed = install(&launcher).await.expect("the install works");
+
+    assert_eq!(installed.status, Status::FirstRunNeeded);
+    let mut expected: Vec<String> = BEPINEX_FILES
+        .iter()
+        .map(|file| file.0.to_owned())
+        .chain(VANILLA.map(str::to_owned))
+        .chain([paths::MOD_DLL.to_owned()])
+        .collect();
+    expected.sort();
+    assert_eq!(listing(&sandbox.game), expected);
+    assert!(!sandbox.game.join(paths::PATCHERS).exists());
+    assert!(listing(&sandbox.data.join("staging")).is_empty());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_update_replaces_the_mod_and_leaves_bepinex_alone() {
     let sandbox = Sandbox::new();
