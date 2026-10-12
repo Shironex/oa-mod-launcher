@@ -13,7 +13,7 @@
 //! - **Other people's files are copied first.** Plugins, patchers and
 //!   settings that are not the mod's go to `backups/<time>/` in the launcher's
 //!   own folder, and the copy is compared with the original before anything
-//!   is deleted.
+//!   is deleted. A link where `backups/` belongs stops the removal.
 //! - **Vanilla first.** `winhttp.dll` goes first: from that moment the game
 //!   starts without BepInEx, whatever happens to the rest.
 //! - **Again is fine.** A removal that was interrupted is finished by running
@@ -217,7 +217,9 @@ impl Launcher {
         let backup_dir = if foreign.is_empty() {
             None
         } else {
-            Some(back_up(&self.layout().backups_dir(), root, &foreign)?)
+            let layout = self.layout();
+            let backups = layout.checked(&layout.backups_dir())?;
+            Some(back_up(&backups, root, &foreign)?)
         };
 
         self.refuse_while_running(root)?;
@@ -372,7 +374,8 @@ fn back_up(backups: &Path, root: &Path, items: &[PathBuf]) -> Result<PathBuf> {
         .map_or(0, |elapsed| elapsed.as_secs());
     let mut target = backups.join(stamp(now));
     let mut attempt = 2;
-    while target.exists() {
+    // Whatever is under that name, a dangling link included, is in the way.
+    while std::fs::symlink_metadata(&target).is_ok() {
         target = backups.join(format!("{}-{attempt}", stamp(now)));
         attempt += 1;
     }
@@ -407,6 +410,10 @@ fn back_up(backups: &Path, root: &Path, items: &[PathBuf]) -> Result<PathBuf> {
         }
     }
 
+    // `create_dir`, not `create_dir_all`, for the backup folder itself: it
+    // must be new, so everything below it is what this call put there.
+    std::fs::create_dir_all(backups).map_err(CoreError::io(COPY, backups))?;
+    std::fs::create_dir(&target).map_err(CoreError::io(COPY, &target))?;
     for folder in &folders {
         std::fs::create_dir_all(folder).map_err(CoreError::io(COPY, folder))?;
     }

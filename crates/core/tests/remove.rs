@@ -567,3 +567,25 @@ async fn a_delete_refused_while_the_game_runs_is_reported_as_the_game_running() 
     launcher.remove_all(false).expect("now it goes");
     assert_eq!(listing(&sandbox.game), VANILLA);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_link_where_the_backups_belong_stops_the_removal_before_anything_is_copied() {
+    let (sandbox, _server, launcher) = installed().await;
+    other_peoples_things(&sandbox);
+    let outside = sandbox.steam.join("outside");
+    put(&outside, "precious.txt", b"keep me");
+    link_dir(&outside, &sandbox.data.join("backups"));
+    let before = listing(&sandbox.game);
+
+    let error = launcher
+        .remove_all(false)
+        .expect_err("no backup is written through a link");
+
+    assert!(matches!(error, CoreError::UnsafePath { .. }), "{error}");
+    assert_eq!(listing(&sandbox.game), before, "nothing was deleted");
+    assert_eq!(
+        listing(&outside),
+        ["precious.txt"],
+        "nothing was copied through the link"
+    );
+}

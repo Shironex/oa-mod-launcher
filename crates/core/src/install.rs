@@ -1,6 +1,7 @@
 //! Installing and updating: BepInEx when the game has none, then the mod.
 //!
-//! Every download goes to the launcher's own `staging/` folder first and is
+//! Every download goes to the launcher's own `staging/` folder first (emptied
+//! before, and refused when a link stands in for it or is in it) and is
 //! compared with the size and the SHA-256 the signed manifest names. Only
 //! then is anything written into the game folder, in an order that leaves the
 //! game either as it was or working:
@@ -68,7 +69,7 @@ impl Launcher {
             Ok(manifest) => self.install_steps(&manifest, &report).await,
             Err(error) => Err(error),
         };
-        clean_staging(self.layout());
+        let _ = clean_staging(self.layout());
         drop(lease);
         result.map_err(|error| self.explained(error))?;
         Ok(self.snapshot())
@@ -79,8 +80,9 @@ impl Launcher {
         let state = self.state()?;
         let facts = inspect::inspect(&game.root, &state, Some(&manifest.bepinex))?;
 
-        let staging = self.layout().staging_dir();
-        clean_staging(self.layout());
+        // A staging folder that is a link, or has one in it, stops the
+        // install here, before anything is downloaded into it.
+        let staging = clean_staging(self.layout())?;
         std::fs::create_dir_all(&staging)
             .map_err(CoreError::io("create the staging folder", &staging))?;
 

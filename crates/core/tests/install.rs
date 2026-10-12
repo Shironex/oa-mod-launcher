@@ -13,8 +13,8 @@ use oa_mod_launcher_core::{
     BepInEx, CoreError, Launcher, Phase, Progress, Remote, Snapshot, Status, UNKNOWN_BUILD, Warning,
 };
 use support::{
-    BEPINEX_FILES, Release, Reply, Sandbox, Signer, TestServer, bepinex_file, listing, put, sha256,
-    unpack_bepinex_by_hand, zip_of,
+    BEPINEX_FILES, Release, Reply, Sandbox, Signer, TestServer, bepinex_file, link_dir, listing,
+    put, sha256, unpack_bepinex_by_hand, zip_of,
 };
 
 fn quiet(_progress: Progress) {}
@@ -565,6 +565,50 @@ async fn a_launcher_that_lost_its_state_adopts_what_it_installed_before() {
 /// The shell shares one launcher between its commands and awaits these steps
 /// from async commands, which may move between threads. Compiling is the
 /// test: the futures are made and dropped without being run.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_link_in_the_launchers_own_staging_folder_is_never_followed() {
+    // The staging folder itself is a link, and then one entry of it is.
+    for linked in ["staging", "staging/bepinex"] {
+        let sandbox = Sandbox::new();
+        let server = TestServer::start().await;
+        server.publish(&Release::new("0.1.0"));
+        // A folder that is not the launcher's, with a file that must survive
+        // and must stay alone.
+        let outside = sandbox.steam.join("outside");
+        put(&outside, "precious.txt", b"keep me");
+        let link = sandbox.data.join(linked);
+        std::fs::create_dir_all(link.parent().expect("a parent")).expect("the data root");
+        link_dir(&outside, &link);
+
+        // Opening clears the staging folder, and must not clear through.
+        let launcher = Launcher::open(sandbox.config(&server)).expect("the launcher opens");
+        assert_eq!(listing(&outside), ["precious.txt"], "{linked}: after open");
+
+        let error = install(&launcher)
+            .await
+            .expect_err("nothing is staged through a link");
+
+        assert!(
+            matches!(error, CoreError::UnsafePath { .. }),
+            "{linked}: {error}"
+        );
+        assert_eq!(
+            listing(&outside),
+            ["precious.txt"],
+            "{linked}: nothing was downloaded or unpacked through the link"
+        );
+        assert_eq!(
+            std::fs::read(outside.join("precious.txt")).expect("the file survives"),
+            b"keep me"
+        );
+        assert_eq!(listing(&sandbox.game), VANILLA, "{linked}");
+        assert!(
+            file_requests(&server).is_empty(),
+            "{linked}: refused before a download"
+        );
+    }
+}
+
 #[test]
 fn the_launcher_is_shared_and_its_async_steps_move_between_threads() {
     fn is_send<T: Send>(_: T) {}

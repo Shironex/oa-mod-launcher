@@ -388,7 +388,9 @@ impl Launcher {
     pub fn open(config: Config) -> Result<Arc<Self>> {
         let client = net::client(&config.launcher_version.to_string())?;
         let state = State::load(&config.layout.state_file()).map_err(|error| error.to_string());
-        clean_staging(&config.layout);
+        // Best effort here: a staging folder that cannot be cleared stops the
+        // next install, which says why, and not the launcher from opening.
+        let _ = clean_staging(&config.layout);
 
         let cached = std::fs::read_to_string(config.layout.cached_manifest())
             .ok()
@@ -524,11 +526,15 @@ impl Launcher {
             Ok((manifest, bytes)) => {
                 inner.last_check = Some(Ok(manifest.clone()));
                 inner.cached = Some(manifest.clone());
-                let cache = self.config.layout.cached_manifest();
-                if let Some(parent) = cache.parent() {
-                    let _ = std::fs::create_dir_all(parent);
+                // Only a convenience for the next start, so a cache that
+                // cannot be written, or that a link stands in for, is skipped.
+                let layout = &self.config.layout;
+                if let Ok(cache) = layout.checked(&layout.cached_manifest()) {
+                    if let Some(parent) = cache.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(&cache, bytes);
                 }
-                let _ = std::fs::write(&cache, bytes);
             }
             Err(error) => inner.last_check = Some(Err(error.to_string())),
         }
@@ -649,7 +655,8 @@ impl Launcher {
         let mut inner = self.lock();
         let mut state = inner.state.clone().map_err(CoreError::State)?;
         change(&mut state);
-        state.save(&self.config.layout.state_file())?;
+        let layout = &self.config.layout;
+        state.save(&layout.checked(&layout.state_file())?)?;
         inner.state = Ok(state);
         Ok(())
     }
@@ -858,20 +865,21 @@ fn warnings(
     warnings
 }
 
-/// Delete everything in `staging/`: the leftovers of an interrupted run.
-/// The folder belongs to the launcher alone, and nothing in it is a link the
-/// launcher made, so a tree with a link in it is left where it is.
-pub(crate) fn clean_staging(layout: &Layout) {
-    let staging = layout.staging_dir();
-    let Ok(entries) = std::fs::read_dir(&staging) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if files::delete_tree(&path).is_err() {
-            let _ = files::delete_file(&path);
-        }
-    }
+/// Delete `staging/` with the leftovers of an interrupted run in it, and hand
+/// out where it was.
+///
+/// The folder belongs to the launcher alone and nothing in it is a link the
+/// launcher made. So a link where the folder belongs, or anywhere in it, is
+/// not followed and not removed: the whole folder is left as it is.
+///
+/// # Errors
+///
+/// [`CoreError::UnsafePath`] in that case. Nothing may be staged then: a
+/// download would be written through the link.
+pub(crate) fn clean_staging(layout: &Layout) -> Result<PathBuf> {
+    let staging = layout.checked(&layout.staging_dir())?;
+    files::delete_tree(&staging)?;
+    Ok(staging)
 }
 
 #[cfg(test)]

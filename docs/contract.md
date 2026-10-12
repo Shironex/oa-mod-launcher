@@ -141,6 +141,8 @@ Two release keys, both minisign keys made by `pnpm tauri signer generate`. There
 
 **The development key** (`dev-keys/dev.key`, public half `dev-keys/dev.key.pub`) is not one of them. Its private half is committed with an empty password on purpose, so it proves nothing. A debug build of the launcher trusts it in addition to the manifest key, for local test manifests; in a release build the constant does not exist (`#[cfg(debug_assertions)]` in `signature.rs`). The scripts sign with it by default for any address that is not on github.com, and refuse to use it by default for one that is.
 
+**The data root override** (`OA_MOD_LAUNCHER_ROOT`) follows the same rule. A debug build keeps `state.json`, `staging/`, `cache/` and `backups/` in the folder the variable names. A release build does not read the variable and always uses `%LOCALAPPDATA%\OaModLauncher`, so nothing in the environment can redirect what it writes and deletes. Below that root the launcher refuses to write or delete through a junction or a symbolic link: one at `staging/` or inside it stops an install, one at `backups/` stops a full removal, and neither is followed or removed.
+
 ## What pins each piece
 
 | Piece                                                     | Pinned by                                                                                                                                       |
