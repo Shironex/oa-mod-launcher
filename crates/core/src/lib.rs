@@ -16,6 +16,7 @@ pub mod launcher;
 pub mod layout;
 pub mod manifest;
 pub mod net;
+pub mod remove;
 pub mod signature;
 pub mod state;
 pub mod steam;
@@ -28,5 +29,6 @@ pub use launcher::{
 };
 pub use layout::Layout;
 pub use manifest::Manifest;
+pub use remove::{ForeignItem, ForeignKind, RemovalOutcome, RemovalPlan};
 pub use state::State;
 pub use version::Version;

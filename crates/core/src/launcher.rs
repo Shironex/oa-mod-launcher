@@ -656,7 +656,6 @@ impl Launcher {
 
     /// The BepInEx block files on disk are recognised by: from the last
     /// check, else from the manifest kept from an earlier start.
-    #[expect(dead_code, reason = "used by the install and removal steps")]
     pub(crate) fn reference(&self) -> Option<manifest::BepInEx> {
         reference_manifest(&self.lock()).map(|manifest| manifest.bepinex)
     }
