@@ -92,7 +92,8 @@ pub fn steam_root() -> Result<PathBuf> {
 /// # Errors
 ///
 /// [`CoreError::GameNotFound`] when no library holds the game's manifest,
-/// [`CoreError::BadSteamFile`] when the manifest is there but cannot be used.
+/// [`CoreError::BadSteamFile`] when a manifest is there but cannot be used and
+/// no other library has a usable one.
 pub fn find_game(root: &Path) -> Result<Found> {
     let list = root.join("steamapps").join("libraryfolders.vdf");
     // A missing or damaged list is not an error: the root is still a library.
@@ -107,21 +108,32 @@ pub fn find_game(root: &Path) -> Result<Found> {
         .map(|library| library.0)
         .chain([root.to_path_buf()]);
 
+    // A manifest that cannot be used does not end the search: a leftover file
+    // in one library must not hide the game in the next. It is reported only
+    // when no library yields the game.
+    let mut first_bad = None;
     for library in candidates {
         let steamapps = library.join("steamapps");
         let manifest = steamapps.join(format!("appmanifest_{APP_ID}.acf"));
         if !manifest.is_file() {
             continue;
         }
-        let app = read_capped(&manifest)
-            .and_then(|text| app_manifest(&text).map_err(|reason| bad_file(&manifest, &reason)))?;
-        return Ok(Found {
-            dir: steamapps.join("common").join(app.install_dir),
-            build_id: app.build_id,
-            state_flags: app.state_flags,
-        });
+        match read_capped(&manifest)
+            .and_then(|text| app_manifest(&text).map_err(|reason| bad_file(&manifest, &reason)))
+        {
+            Ok(app) => {
+                return Ok(Found {
+                    dir: steamapps.join("common").join(app.install_dir),
+                    build_id: app.build_id,
+                    state_flags: app.state_flags,
+                });
+            }
+            Err(error) => {
+                first_bad.get_or_insert(error);
+            }
+        }
     }
-    Err(CoreError::GameNotFound)
+    Err(first_bad.unwrap_or(CoreError::GameNotFound))
 }
 
 fn bad_file(path: &Path, reason: &str) -> CoreError {

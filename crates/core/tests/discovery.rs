@@ -90,3 +90,18 @@ fn a_manifest_that_points_outside_the_library_is_refused() {
         Err(CoreError::BadSteamFile { .. })
     ));
 }
+
+#[test]
+fn a_bad_manifest_in_one_library_does_not_hide_the_game_in_the_next() {
+    let temp = tempfile::tempdir().expect("a temporary directory");
+    let root = temp.path().join("Steam");
+    let second = temp.path().join("SteamLibrary");
+    support::write_library_list(&root, &[(&root, &[steam::APP_ID]), (&second, &[])]);
+    support::write_app_manifest(&root, "..\\..\\elsewhere");
+    let dir = support::fake_game_folder(&second);
+
+    assert_eq!(
+        steam::find_game(&root).expect("the second library").dir,
+        dir
+    );
+}
