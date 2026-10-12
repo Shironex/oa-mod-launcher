@@ -52,11 +52,26 @@ export const commands = {
 	 *  be used to open anything else. The game folder is never created here.
 	 */
 	openFolder: (folder: Folder) => __TAURI_INVOKE<null>("open_folder", { folder }),
+	/**
+	 *  Ask whether a newer launcher exists. Reads `latest.json` only.
+	 * 
+	 *  A development build answers "none" without a request, so `pnpm tauri dev`
+	 *  never tries to replace itself.
+	 */
+	checkLauncherUpdate: () => __TAURI_INVOKE<LauncherUpdate>("check_launcher_update"),
+	/**
+	 *  Download the newest launcher, check its signature and install it.
+	 * 
+	 *  When it works this never answers: the plugin starts the installer and
+	 *  ends this process, and the installer starts the new launcher.
+	 */
+	installLauncherUpdate: () => __TAURI_INVOKE<null>("install_launcher_update"),
 };
 
 /** Events */
 export const events = {
 	installProgress: makeEvent<InstallProgress>("install-progress"),
+	launcherUpdateProgress: makeEvent<LauncherUpdateProgress>("launcher-update-progress"),
 	snapshotChanged: makeEvent<SnapshotChanged>("snapshot-changed"),
 };
 
@@ -141,6 +156,25 @@ export type GameInfo = {
 
 /**  Sent while the mod, or BepInEx before it, is downloaded and installed. */
 export type InstallProgress = Progress;
+
+/**  What a check for a newer launcher found. */
+export type LauncherUpdate = 
+/**  This launcher is the newest one. */
+{ kind: "none" } | 
+/**  A newer launcher can be installed. */
+{ kind: "available"; 
+/**  Its version. */
+version: string; 
+/**  What changed, as written in `latest.json`. */
+notes: string | null };
+
+/**  Sent while the new launcher is being downloaded. */
+export type LauncherUpdateProgress = {
+	/**  Bytes received so far. */
+	received: number | null,
+	/**  The size of the download, 0 when the server did not say. */
+	total: number | null,
+};
 
 /**  The step an install is in. */
 export type Phase = 

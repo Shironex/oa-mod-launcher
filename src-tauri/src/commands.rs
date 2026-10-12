@@ -17,6 +17,7 @@ use tauri::{AppHandle, State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 use tauri_specta::Event;
 
+use crate::updater::SelfUpdate;
 use crate::{AppState, log};
 
 /// Sent while the mod, or BepInEx before it, is downloaded and installed.
@@ -38,6 +39,15 @@ pub enum Folder {
     Logs,
     /// Where other people's plugins are copied before a full removal.
     Backups,
+}
+
+/// Refuse to start something the launcher's own update would cut off: its
+/// installer ends this process as soon as the download is checked.
+fn refuse_during_self_update(own: &SelfUpdate) -> Result<(), String> {
+    if own.is_installing() {
+        return Err("The launcher is updating itself and restarts when that is done".to_owned());
+    }
+    Ok(())
 }
 
 /// Run `work` with the launcher on a thread that may wait for the disk.
@@ -101,7 +111,12 @@ pub async fn check_for_updates(state: State<'_, AppState>) -> Result<Snapshot, S
 /// mod with the newest build.
 #[tauri::command]
 #[specta::specta]
-pub async fn install(app: AppHandle, state: State<'_, AppState>) -> Result<Snapshot, String> {
+pub async fn install(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    own: State<'_, SelfUpdate>,
+) -> Result<Snapshot, String> {
+    refuse_during_self_update(&own)?;
     let launcher = Arc::clone(state.launcher()?);
     let report = |progress: Progress| {
         let _ = InstallProgress(progress).emit(&app);
@@ -144,7 +159,11 @@ pub async fn removal_preview(state: State<'_, AppState>) -> Result<RemovalPlan, 
 /// Remove the mod and its settings. BepInEx and every other plugin stay.
 #[tauri::command]
 #[specta::specta]
-pub async fn remove_mod(state: State<'_, AppState>) -> Result<Snapshot, String> {
+pub async fn remove_mod(
+    state: State<'_, AppState>,
+    own: State<'_, SelfUpdate>,
+) -> Result<Snapshot, String> {
+    refuse_during_self_update(&own)?;
     step(&state, "remove only the mod", Launcher::remove_mod).await
 }
 
@@ -157,7 +176,9 @@ pub async fn remove_mod(state: State<'_, AppState>) -> Result<Snapshot, String> 
 pub async fn remove_all(
     include_unrecognised: bool,
     state: State<'_, AppState>,
+    own: State<'_, SelfUpdate>,
 ) -> Result<RemovalOutcome, String> {
+    refuse_during_self_update(&own)?;
     step(&state, "remove everything", move |launcher| {
         launcher.remove_all(include_unrecognised)
     })

@@ -6,7 +6,7 @@
 
 use tauri_specta::{Builder, ErrorHandlingMode, collect_commands, collect_events};
 
-use crate::commands;
+use crate::{commands, updater};
 
 /// The one builder the handler, the events and the bindings all come from.
 ///
@@ -28,12 +28,15 @@ pub(crate) fn builder() -> Builder<tauri::Wry> {
             commands::reset_game_folder,
             commands::set_check_on_start,
             commands::open_folder,
+            updater::check_launcher_update,
+            updater::install_launcher_update,
         ])
         // The one text of the core the page has to compare with.
         .constant("UNKNOWN_BUILD", oa_mod_launcher_core::UNKNOWN_BUILD)
         .events(collect_events![
             commands::InstallProgress,
-            commands::SnapshotChanged
+            commands::SnapshotChanged,
+            updater::LauncherUpdateProgress
         ])
 }
 

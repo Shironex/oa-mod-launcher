@@ -50,6 +50,14 @@ tauri-plugin-single-instance = "2.4"
 # The folder picker. Called from Rust only: the page has no permission for it.
 # Held on the 2.7 line: 2.8 needs Rust 1.90.
 tauri-plugin-dialog = "~2.7"
+# The launcher's own update. Pinned exactly: 2.13 needs tauri 2.12 and Rust
+# 1.90, and `updater.rs` uses `configure_client`, whose argument is a type of
+# the HTTP crate the plugin was built with. Without its `zip` feature: that
+# one only unpacks the zipped installers of Tauri 1.
+tauri-plugin-updater = { version = "=2.12.0", default-features = false, features = ["rustls-tls", "system-proxy"] }
+# Named only to choose the TLS crypto provider of the process, see `run()` in
+# the shell. The same crate and version line `reqwest` already brings in.
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std"] }
 # Exact pins: these are release candidates, and a floating one would generate
 # different bindings on two machines.
 specta = { version = "=2.0.0-rc.25", features = ["derive"] }

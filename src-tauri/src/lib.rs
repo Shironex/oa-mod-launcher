@@ -3,10 +3,14 @@
 //! This crate decides nothing. It opens the window, turns the methods of
 //! [`oa_mod_launcher_core::Launcher`] into commands, and forwards progress and
 //! changes to the page as events. The page makes no network request.
+//!
+//! The one thing that does not come from the core is the launcher's own
+//! update, in [`updater`].
 
 mod bindings;
 pub mod commands;
 mod log;
+pub mod updater;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -84,6 +88,18 @@ fn poll(app: AppHandle, launcher: Arc<Launcher>) {
 /// When the window system cannot be started at all. There is nothing to show
 /// an error in at that point.
 pub fn run() {
+    // One TLS crypto provider for the whole process, chosen here.
+    //
+    // Two are compiled in: the core's HTTP client is built for `aws-lc-rs`
+    // and the updater plugin for `ring`. With both present `rustls` picks no
+    // default by itself. The plugin would then make `ring` the default at its
+    // first update check, and every HTTP client built after that moment would
+    // use it, so the provider of a request would depend on which check ran
+    // first. Naming it here settles that before any client exists: the one
+    // the core is tested with. The call only fails when a default is already
+    // set, which cannot be the case on the first line of the program.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     let specta = bindings::builder();
 
     tauri::Builder::default()
@@ -99,9 +115,12 @@ pub fn run() {
         // Registered without a permission in `capabilities/`, so the page
         // cannot call the plugin. Only `pick_game_folder` opens a dialog.
         .plugin(tauri_plugin_dialog::init())
+        // The same: only `updater.rs` drives it.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             launcher: open_launcher(),
         })
+        .manage(updater::SelfUpdate::default())
         .invoke_handler(specta.invoke_handler())
         .setup(move |app| {
             specta.mount_events(app);
