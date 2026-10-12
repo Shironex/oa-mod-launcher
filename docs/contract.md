@@ -105,6 +105,7 @@ The mod repository keeps one file that describes the BepInEx build it needs. `bu
 The launcher unpacks the zip into its own staging folder and refuses it unless:
 
 - its top level holds nothing but `BepInEx/`, `dotnet/` and the four root files, and all four are there;
+- every file in `BepInEx/` is in `BepInEx/core/` (that folder is the only one of BepInEx the launcher moves into the game folder, so anything else would be dropped);
 - `BepInEx/core/BepInEx.Unity.IL2CPP.dll` hashes to `probe_sha256` and each root file to its entry in `root_files`;
 - no entry is absolute, has a drive letter or a `..` part, or is a symbolic link;
 - no part of an entry name is one Windows would rewrite: a trailing dot or space, or a device name (`CON`, `PRN`, `AUX`, `NUL`, `COM0` to `COM9`, `LPT0` to `LPT9`, with or without an extension);

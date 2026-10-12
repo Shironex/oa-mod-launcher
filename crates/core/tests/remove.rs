@@ -764,3 +764,21 @@ async fn a_foreign_file_that_cannot_be_copied_gets_nothing_deleted() {
         b"MZ loose"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dotnet_folder_with_no_file_in_it_is_removed() {
+    let sandbox = Sandbox::new();
+    // No runtime in it, and nothing else either: there is nothing to lose.
+    std::fs::create_dir_all(sandbox.game.join("dotnet/shared/empty")).expect("empty folders");
+    let launcher = Launcher::open(sandbox.config_offline()).expect("the launcher opens");
+
+    let plan = launcher.removal_preview().expect("a plan");
+    assert_eq!(plan.folders, ["dotnet"]);
+    assert!(plan.kept.is_empty());
+
+    let outcome = launcher.remove_all(false).expect("the folder is removed");
+
+    assert!(outcome.kept.is_empty());
+    assert!(!sandbox.game.join("dotnet").exists());
+    assert_eq!(outcome.snapshot.status, Status::Clean);
+}

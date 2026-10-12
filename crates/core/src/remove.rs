@@ -104,8 +104,8 @@ pub struct RemovalPlan {
     /// go with the proxy DLL that reads them.
     pub kept_with_proxy: Vec<String>,
     /// What a full removal never deletes although it has a name of BepInEx,
-    /// because it is not what the name says: a `dotnet` folder without the
-    /// .NET runtime in it, a folder under the name of a root file, or a file
+    /// because it is not what the name says: a `dotnet` folder that holds
+    /// files and no .NET runtime, a folder under the name of a root file, or a file
     /// under the name `dotnet` or `BepInEx`.
     pub kept: Vec<String>,
     /// Other people's plugins, patchers and settings. A full removal copies
@@ -319,8 +319,12 @@ fn plan(root: &Path, state: &State, reference: Option<&manifest::BepInEx>) -> Re
     let dotnet = files::inside(root, paths::DOTNET)?;
     if dotnet.exists() {
         // A folder named `dotnet` is BepInEx's runtime only when the runtime
-        // is in it. Anything else under that name is not ours to delete.
-        if dotnet.is_dir() && files::inside(root, paths::DOTNET_PROOF)?.is_file() {
+        // is in it. Anything else under that name is not ours to delete,
+        // unless there is no file in it at all: then nothing can be lost.
+        let empty_or_runtime = dotnet.is_dir()
+            && (files::inside(root, paths::DOTNET_PROOF)?.is_file()
+                || files::scan_tree(&dotnet).is_ok_and(|tree| tree.files.is_empty()));
+        if empty_or_runtime {
             files::scan_tree(&dotnet)?;
             folders.push(paths::DOTNET.to_owned());
         } else {

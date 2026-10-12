@@ -4,6 +4,7 @@
 
 mod support;
 
+use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::Ordering;
 
@@ -606,6 +607,147 @@ async fn a_link_in_the_launchers_own_staging_folder_is_never_followed() {
             file_requests(&server).is_empty(),
             "{linked}: refused before a download"
         );
+    }
+}
+
+/// What an install that died left in the game folder, told by what is there.
+fn where_it_died(game: &Path) -> &'static str {
+    let there = |relative: &str| game.join(relative).exists();
+    if there("winhttp.dll") {
+        "the proxy DLL is in place"
+    } else if there("doorstop_config.ini") {
+        "after the small root files, before winhttp.dll"
+    } else if there("BepInEx/core") {
+        "after both folders, before the root files"
+    } else if there("dotnet") {
+        "after dotnet, before BepInEx"
+    } else if there(paths::INSTALL_READY) {
+        "everything staged, nothing in place"
+    } else if game.join(paths::INSTALL_PART).join("BepInEx").exists() {
+        "after both folders were copied"
+    } else if game
+        .join(paths::INSTALL_PART)
+        .join("dotnet/shared")
+        .exists()
+    {
+        "after all of dotnet was copied"
+    } else if game
+        .join(paths::INSTALL_PART)
+        .join(paths::DOTNET_PROOF)
+        .exists()
+    {
+        "after a part of dotnet"
+    } else {
+        "before the first write"
+    }
+}
+
+/// The launcher is killed at every step of putting BepInEx into the game
+/// folder, one step per round. The kill is a panic in the question "is the
+/// game running", which is asked before every step: it unwinds through the
+/// placement without running any of its cleanup, which is what the process
+/// dying does.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_install_killed_at_any_step_is_undone_by_the_next_start() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
+
+    let mut complete: Vec<String> = BEPINEX_FILES
+        .iter()
+        .map(|file| file.0.to_owned())
+        .chain(VANILLA.map(str::to_owned))
+        .chain([paths::MOD_DLL.to_owned()])
+        .collect();
+    complete.sort();
+
+    for then_remove in [false, true] {
+        let mut died_at = Vec::new();
+        for kill_at in 1.. {
+            let sandbox = Sandbox::new();
+            let server = TestServer::start().await;
+            server.publish(&Release::new("0.1.0"));
+            let armed = Arc::new(AtomicBool::new(false));
+            let asked = Arc::new(AtomicUsize::new(0));
+            let mut config = sandbox.config(&server);
+            let (switch, counter) = (Arc::clone(&armed), Arc::clone(&asked));
+            config.running = Arc::new(move |_| {
+                if switch.load(Ordering::SeqCst)
+                    && counter.fetch_add(1, Ordering::SeqCst) + 1 == kill_at
+                {
+                    // Not `panic!`: this is not a failure of the test, and
+                    // it should not print like one.
+                    std::panic::resume_unwind(Box::new("the launcher is killed here"));
+                }
+                false
+            });
+            let launcher = Launcher::open(config).expect("the launcher opens");
+
+            // Armed for exactly the step that writes BepInEx.
+            let killed = launcher
+                .install(&|progress: Progress| {
+                    armed.store(progress.phase == Phase::InstallingBepInEx, Ordering::SeqCst);
+                })
+                .await;
+            armed.store(false, Ordering::SeqCst);
+            if killed.is_ok() {
+                // The question was asked fewer than `kill_at` times: every
+                // step has had its round.
+                break;
+            }
+            let stage = where_it_died(&sandbox.game);
+            died_at.push(stage);
+            assert!(
+                !sandbox.game.join("winhttp.dll").exists(),
+                "{stage}: the game would load half an install"
+            );
+            assert_eq!(sandbox.saved_state().bepinex, None, "{stage}");
+            drop(launcher);
+
+            // The next start of the launcher.
+            let launcher = Launcher::open(sandbox.config(&server)).expect("the launcher opens");
+            if then_remove {
+                let outcome = launcher
+                    .remove_all(false)
+                    .unwrap_or_else(|error| panic!("{stage}: the removal fails: {error}"));
+                assert!(outcome.kept.is_empty(), "{stage}: {:?}", outcome.kept);
+                assert_eq!(listing(&sandbox.game), VANILLA, "{stage}");
+                assert_eq!(
+                    std::fs::read_dir(&sandbox.game).expect("listed").count(),
+                    VANILLA.len(),
+                    "{stage}: not even an empty folder is left"
+                );
+            } else {
+                assert_eq!(
+                    listing(&sandbox.game),
+                    VANILLA,
+                    "{stage}: opening the launcher took the half install back out"
+                );
+                let installed = install(&launcher)
+                    .await
+                    .unwrap_or_else(|error| panic!("{stage}: the next install fails: {error}"));
+                assert_eq!(installed.status, Status::FirstRunNeeded, "{stage}");
+                assert_eq!(listing(&sandbox.game), complete, "{stage}");
+                assert_eq!(
+                    sandbox.saved_state().bepinex.map(|record| record.owner),
+                    Some(Owner::Launcher),
+                    "{stage}"
+                );
+                assert!(!sandbox.game.join(paths::INSTALL_PART).exists(), "{stage}");
+                assert!(!sandbox.game.join(paths::INSTALL_READY).exists(), "{stage}");
+            }
+        }
+
+        for stage in [
+            "after a part of dotnet",
+            "after dotnet, before BepInEx",
+            "after both folders, before the root files",
+            "after the small root files, before winhttp.dll",
+        ] {
+            assert!(
+                died_at.contains(&stage),
+                "no round died {stage}: {died_at:?}"
+            );
+        }
     }
 }
 

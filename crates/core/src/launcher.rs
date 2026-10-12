@@ -376,7 +376,9 @@ impl Drop for Lease<'_> {
 }
 
 impl Launcher {
-    /// Open the launcher: read the state and clear `staging/`.
+    /// Open the launcher: read the state, clear `staging/`, and undo an
+    /// install of BepInEx that was interrupted, when the game folder may be
+    /// written to at this moment.
     ///
     /// A state file that cannot be read does not stop the launcher from
     /// opening: the snapshot then has the status [`Status::Error`], and every
@@ -396,7 +398,7 @@ impl Launcher {
             .ok()
             .and_then(|text| Manifest::parse_from(&text, &config.download_prefix).ok());
 
-        Ok(Arc::new(Self {
+        let launcher = Arc::new(Self {
             config,
             client,
             inner: Mutex::new(Inner {
@@ -406,7 +408,13 @@ impl Launcher {
                 activity: Activity::Idle,
             }),
             busy: Arc::new(AtomicBool::new(false)),
-        }))
+        });
+        // An install that died is undone now, so the first snapshot shows
+        // the game as it was. Best effort: without a game folder, while the
+        // game runs or while Steam is busy it waits for the next install or
+        // removal, which both begin with the same step.
+        let _ = launcher.writable_game();
+        Ok(launcher)
     }
 
     /// The directory layout this launcher uses.
@@ -701,13 +709,15 @@ impl Launcher {
     }
 
     /// The game folder, once everything that must hold before a write holds:
-    /// it is the game, Steam is not busy with it, and it is not running.
+    /// it is the game, Steam is not busy with it, it is not running, and what
+    /// an install that died left in it is undone.
     pub(crate) fn writable_game(&self) -> Result<Located> {
         let located = self.locate(&self.state()?)?;
         if located.steam_busy {
             return Err(CoreError::SteamBusy);
         }
         self.refuse_while_running(&located.root)?;
+        crate::install::clear_interrupted(&located.root)?;
         Ok(located)
     }
 
