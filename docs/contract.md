@@ -2,10 +2,10 @@
 
 Two repositories publish files that an installed launcher reads:
 
-| Repository                 | Publishes                                                               | Read by                    |
-| -------------------------- | ----------------------------------------------------------------------- | -------------------------- |
-| `Shironex/oa-mod`          | the mod DLL, `manifest.json`, `manifest.json.sig`, the BepInEx mirror   | the launcher's core (Rust) |
-| `Shironex/oa-mod-launcher` | the launcher installer and `latest.json` (a later slice, not built yet) | `tauri-plugin-updater`     |
+| Repository                 | Publishes                                                             | Read by                    |
+| -------------------------- | --------------------------------------------------------------------- | -------------------------- |
+| `Shironex/oa-mod`          | the mod DLL, `manifest.json`, `manifest.json.sig`, the BepInEx mirror | the launcher's core (Rust) |
+| `Shironex/oa-mod-launcher` | the launcher installer and `latest.json`                              | `tauri-plugin-updater`     |
 
 An installed launcher cannot be changed from outside, only replaced by an update it accepts. So everything on this page is frozen into every copy that is installed. A change here needs a new launcher first, and `launcher.min` in the manifest to keep the old ones away from what they cannot read.
 
@@ -13,15 +13,36 @@ The mod's release workflow checks out this repository at a pinned commit and run
 
 ## The address
 
-| What               | Address                                                                     | Compiled in at                             |
-| ------------------ | --------------------------------------------------------------------------- | ------------------------------------------ |
-| The mod's manifest | `https://github.com/Shironex/oa-mod/releases/latest/download/manifest.json` | `DEFAULT_FEED` in `crates/core/src/net.rs` |
+| What                      | Address                                                                            | Compiled in at                                             |
+| ------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| The mod's manifest        | `https://github.com/Shironex/oa-mod/releases/latest/download/manifest.json`        | `DEFAULT_FEED` in `crates/core/src/net.rs`                 |
+| The launcher's own update | `https://github.com/Shironex/oa-mod-launcher/releases/latest/download/latest.json` | `plugins.updater.endpoints` in `src-tauri/tauri.conf.json` |
 
 `manifest.json.sig` is read from the same address with `.sig` appended.
 
 "Latest" means the newest published release that is not a prerelease. That is why the BepInEx mirror is a prerelease, and why a mod release is created as a draft and published last, when all of its files are in place.
 
 Only https is accepted, also after redirects.
+
+## Launcher release files
+
+A launcher release holds two files: `OaModLauncher-<version>-windows-x64-setup.exe` (the NSIS installer, Windows x64 only) and `latest.json`, which `scripts/build-latest.mjs` writes:
+
+```json
+{
+  "version": "0.1.0",
+  "notes": "The section of this version in CHANGELOG.md.",
+  "pub_date": "2026-10-20T18:00:00.000Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "<the content of the installer's .sig file>",
+      "url": "https://github.com/Shironex/oa-mod-launcher/releases/download/v0.1.0/OaModLauncher-0.1.0-windows-x64-setup.exe"
+    }
+  }
+}
+```
+
+The signature is made with `tauri signer sign --app-version <version>`, by the updater key. `requireSignedVersion` is on, so an installed launcher refuses an installer whose signature does not carry the version `latest.json` names. Only https is accepted, for `latest.json`, for the redirect GitHub answers with and for the installer.
 
 ## Mod release files
 
@@ -135,10 +156,10 @@ A manifest whose signature is missing or wrong is a failed check: nothing is ins
 
 Two release keys, both minisign keys made by `pnpm tauri signer generate`. There are no spare keys: if one is lost, everyone installs a new launcher by hand.
 
-| Key        | Public half is in                                   | Signs                                |
-| ---------- | --------------------------------------------------- | ------------------------------------ |
-| `manifest` | `RELEASE_KEYS[0]` in `crates/core/src/signature.rs` | `manifest.json` of every mod release |
-| `updater`  | the updater configuration (a later slice)           | every launcher installer             |
+| Key        | Public half is in                                       | Signs                                |
+| ---------- | ------------------------------------------------------- | ------------------------------------ |
+| `manifest` | `RELEASE_KEYS[0]` in `crates/core/src/signature.rs`     | `manifest.json` of every mod release |
+| `updater`  | `plugins.updater.pubkey` in `src-tauri/tauri.conf.json` | every launcher installer             |
 
 **The development key** (`dev-keys/dev.key`, public half `dev-keys/dev.key.pub`) is not one of them. Its private half is committed with an empty password on purpose, so it proves nothing. A debug build of the launcher trusts it in addition to the manifest key, for local test manifests; in a release build the constant does not exist (`#[cfg(debug_assertions)]` in `signature.rs`). The scripts sign with it by default for any address that is not on github.com, and refuse to use it by default for one that is.
 
