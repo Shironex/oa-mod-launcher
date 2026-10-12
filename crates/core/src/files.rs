@@ -130,6 +130,9 @@ pub fn inside(root: &Path, relative: impl AsRef<Path>) -> Result<PathBuf> {
 /// Turn the failure of a write or a delete in the game folder into the
 /// sentence that helps: a sharing violation means the game is running, a
 /// refused access that the folder is not writable.
+///
+/// A refused access can be the game too (a DLL it has loaded). This function
+/// cannot ask, so the launcher does, see `Launcher::explained`.
 pub fn write_error(
     operation: &'static str,
     path: &Path,

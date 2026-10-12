@@ -70,7 +70,7 @@ impl Launcher {
         };
         clean_staging(self.layout());
         drop(lease);
-        result?;
+        result.map_err(|error| self.explained(error))?;
         Ok(self.snapshot())
     }
 

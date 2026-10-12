@@ -143,12 +143,13 @@ impl Launcher {
     ///
     /// [`CoreError::Busy`], [`CoreError::GameNotFound`],
     /// [`CoreError::SteamBusy`], [`CoreError::GameRunning`],
-    /// [`CoreError::UnsafePath`], [`CoreError::NotWritable`].
+    /// [`CoreError::UnsafePath`], [`CoreError::NotWritable`]. A delete the
+    /// folder refuses while the game runs is [`CoreError::GameRunning`].
     pub fn remove_mod(&self) -> Result<Snapshot> {
         let lease = self.lease(Activity::Removing)?;
         let removed = self.remove_mod_steps();
         drop(lease);
-        removed?;
+        removed.map_err(|error| self.explained(error))?;
         Ok(self.snapshot())
     }
 
@@ -187,7 +188,7 @@ impl Launcher {
         let lease = self.lease(Activity::Removing)?;
         let removed = self.remove_all_steps(include_unrecognised);
         drop(lease);
-        let (kept, backup_dir) = removed?;
+        let (kept, backup_dir) = removed.map_err(|error| self.explained(error))?;
         Ok(RemovalOutcome {
             snapshot: self.snapshot(),
             kept,

@@ -527,3 +527,43 @@ fn without_a_game_folder_nothing_is_removed() {
     assert_eq!(listing(&sandbox.game), before);
     assert_eq!(sandbox.saved_state(), State::default());
 }
+
+/// Windows answers "access denied", not a sharing violation, when the running
+/// game has a DLL mapped. A folder with the read-only flag is refused the
+/// same way, which is how the test gets that answer without a game.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delete_refused_while_the_game_runs_is_reported_as_the_game_running() {
+    let sandbox = Sandbox::new();
+    let server = TestServer::start().await;
+    server.publish(&Release::new("0.1.0"));
+    // Once armed, the game starts the moment the removal has begun: the
+    // proxy DLL is the first thing to go.
+    let armed = Arc::new(AtomicBool::new(false));
+    let mut config = sandbox.config(&server);
+    let switch = Arc::clone(&armed);
+    config.running =
+        Arc::new(move |root| switch.load(Ordering::SeqCst) && !root.join("winhttp.dll").exists());
+    let launcher = Launcher::open(config).expect("the launcher opens");
+    launcher.install(&quiet).await.expect("the install works");
+    let core = sandbox.game.join("BepInEx").join("core");
+    let read_only = |on: bool| {
+        let mut permissions = std::fs::metadata(&core).expect("metadata").permissions();
+        permissions.set_readonly(on);
+        std::fs::set_permissions(&core, permissions).expect("the flag is set");
+    };
+    read_only(true);
+
+    armed.store(true, Ordering::SeqCst);
+    let error = launcher.remove_all(false).expect_err("the folder refuses");
+    assert!(matches!(error, CoreError::GameRunning), "{error}");
+
+    // The same refusal without a running game is the folder's own.
+    armed.store(false, Ordering::SeqCst);
+    let error = launcher.remove_all(false).expect_err("the folder refuses");
+    assert!(matches!(error, CoreError::NotWritable { .. }), "{error}");
+
+    read_only(false);
+    launcher.remove_all(false).expect("now it goes");
+    assert_eq!(listing(&sandbox.game), VANILLA);
+}

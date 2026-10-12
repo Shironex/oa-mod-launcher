@@ -713,6 +713,23 @@ impl Launcher {
         }
     }
 
+    /// Say why the game folder refused a write or a delete, when the game is
+    /// the reason. Windows answers "access denied", not a sharing violation,
+    /// for a DLL a running game has loaded, and that reads as a folder that
+    /// is not writable. So the game is asked about once more, and a running
+    /// game is what the player is told.
+    pub(crate) fn explained(&self, error: CoreError) -> CoreError {
+        if matches!(error, CoreError::NotWritable { .. })
+            && self
+                .game_dir()
+                .is_some_and(|root| (self.config.running)(&root))
+        {
+            CoreError::GameRunning
+        } else {
+            error
+        }
+    }
+
     pub(crate) fn set_activity(&self, activity: Activity) {
         self.lock().activity = activity;
     }
