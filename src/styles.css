@@ -96,11 +96,6 @@ body {
     user-select: text;
     cursor: text;
   }
-  .win p,
-  .win h2,
-  .win h3 {
-    margin: 0;
-  }
   .ico {
     width: 1.25em;
     height: 1.25em;
@@ -806,7 +801,7 @@ body {
   }
   .dl li {
     display: grid;
-    grid-template-columns: calc(280 * var(--u)) minmax(0, 1fr);
+    grid-template-columns: calc(380 * var(--u)) minmax(0, 1fr);
     gap: calc(10 * var(--u));
   }
   .dl li b {

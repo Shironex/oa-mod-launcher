@@ -7,6 +7,11 @@ interface ModalProps {
   /** The accessible name of the dialog. */
   label: string;
   onClose: () => void;
+  /**
+   * Names what the dialog shows when it has several steps. A new step moves
+   * the focus to its own first element.
+   */
+  step?: string;
   /** The left pane. Without it the dialog is one column. */
   side?: ReactNode;
   children: ReactNode;
@@ -19,7 +24,7 @@ interface ModalProps {
  * `data-autofocus` or else to the close button, and returns to the button
  * that opened it when it closes. Tab stays inside, Escape closes.
  */
-export function Modal({ label, onClose, side, children }: ModalProps) {
+export function Modal({ label, onClose, step, side, children }: ModalProps) {
   const dialog = useRef<HTMLDivElement>(null);
 
   // The element that had the focus when the dialog was opened. Read once while
@@ -35,8 +40,9 @@ export function Modal({ label, onClose, side, children }: ModalProps) {
       dialog.current?.querySelector<HTMLElement>('[data-autofocus]') ??
       dialog.current?.querySelector<HTMLElement>('.m-x');
     first?.focus();
-    return () => opener?.focus();
-  }, [opener]);
+  }, [step]);
+
+  useEffect(() => () => opener?.focus(), [opener]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

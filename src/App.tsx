@@ -1,5 +1,7 @@
 import { useCallback, useEffect, type CSSProperties } from 'react';
+import { RemoveModal } from './components/RemoveModal';
 import { Scorecard } from './components/Scorecard';
+import { SettingsModal } from './components/SettingsModal';
 import { TitleBar } from './components/TitleBar';
 import { useLauncher, type Dialog } from './state/store';
 import { deriveView, type Action, type ViewInput } from './state/view';
@@ -68,6 +70,17 @@ export function Window({ state }: { state: WindowState }) {
           onOpenFolder={folder => void openFolder(folder)}
         />
       </main>
+
+      {(dialog === 'settings' || dialog === 'about') && (
+        <SettingsModal
+          section={dialog}
+          snapshot={snapshot}
+          locked={view.locked}
+          canRemove={view.canRemove}
+          error={state.error}
+        />
+      )}
+      {dialog === 'remove' && <RemoveModal />}
     </div>
   );
 }
