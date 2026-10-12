@@ -1,0 +1,30 @@
+@import 'tailwindcss';
+
+/* Fonts are bundled with the launcher. Nothing is requested at run time. */
+@import '@fontsource/atkinson-hyperlegible-next/latin-400.css';
+@import '@fontsource/atkinson-hyperlegible-next/latin-700.css';
+@import '@fontsource/atkinson-hyperlegible-mono/latin-400.css';
+
+/* The first few tokens of the window design: one daytime look. */
+@theme {
+  --color-page: #f1f8ec;
+  --color-ink: #12301f;
+  --color-dim: #536c5c;
+
+  --font-display: 'Bagel Fat One', 'Arial Rounded MT Bold', 'Trebuchet MS', system-ui, sans-serif;
+  --font-body: 'Atkinson Hyperlegible Next', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Atkinson Hyperlegible Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-page);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+}

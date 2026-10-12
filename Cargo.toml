@@ -1,0 +1,64 @@
+# OA Mod Launcher: Rust workspace.
+#
+# `crates/core` holds every rule of the launcher (signature check, download,
+# unpacking, finding the game) and knows nothing about Tauri, so it is tested
+# without a window. `src-tauri` is the thin shell around it.
+
+[workspace]
+resolver = "3"
+members = ["crates/core", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+authors = ["Shironex"]
+repository = "https://github.com/Shironex/oa-mod-launcher"
+publish = false
+
+[workspace.dependencies]
+oa-mod-launcher-core = { path = "crates/core" }
+
+thiserror = "2"
+# `fs` and `io-util` stream a download to disk, `time` bounds a request.
+tokio = { version = "1", features = ["rt", "time", "fs", "io-util", "macros"] }
+# rustls instead of the system TLS library, so the behaviour is the same on
+# every system. No cookies, no charset decoding, no blocking client.
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2", "system-proxy"] }
+url = "2.5"
+sha2 = "0.10"
+# Deflate is the only method the release zips use.
+zip = { version = "6", default-features = false, features = ["deflate"] }
+tempfile = "3"
+# The manifest signature check. `minisign-verify` and `base64` are the crates
+# and version lines `tauri-plugin-updater` verifies with, so a key pair made by
+# `pnpm tauri signer generate` is read here the same way.
+minisign-verify = "0.2"
+base64 = "0.22"
+# Tests only: signs fixtures with keys made inside the test. The 0.9 line is
+# the one the Tauri CLI signs with, so the fixtures have the format of the
+# real signatures.
+minisign = "0.9"
+# Windows only: reads where Steam is installed from the registry.
+winreg = "0.55"
+
+tauri = { version = "2.11", features = [] }
+tauri-build = "2"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+await_holding_lock = "warn"
+unwrap_used = "warn"
+todo = "warn"
+dbg_macro = "warn"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = "s"
+panic = "abort"

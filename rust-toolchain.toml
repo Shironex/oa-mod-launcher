@@ -1,0 +1,7 @@
+# One Rust version for every machine and for CI. Without it a runner builds
+# with whatever stable is that week, and a new clippy lint turns CI red on a
+# commit that changed nothing. Raise it on purpose, with the checks green.
+# The floor is `rust-version` in Cargo.toml.
+[toolchain]
+channel = "1.97.1"
+components = ["clippy", "rustfmt"]

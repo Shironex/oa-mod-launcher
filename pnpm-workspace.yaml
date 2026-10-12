@@ -1,0 +1,10 @@
+# One package. This file exists for the settings below, which pnpm reads from
+# here so that they travel with the repository.
+packages:
+  - '.'
+
+# No version younger than 7 days (in minutes) is installed, on any machine.
+minimumReleaseAge: 10080
+
+onlyBuiltDependencies:
+  - esbuild

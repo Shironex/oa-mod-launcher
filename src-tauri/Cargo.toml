@@ -1,0 +1,25 @@
+[package]
+name = "oa-mod-launcher"
+description = "OA Mod Launcher: the window around the launcher rules"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+default-run = "oa-mod-launcher"
+
+[lib]
+# A library, so the shell can be tested without opening a window. The binary
+# is a three line entry point.
+name = "oa_mod_launcher_lib"
+crate-type = ["lib"]
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dependencies]
+tauri = { workspace = true }
+
+[lints]
+workspace = true

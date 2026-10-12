@@ -1,0 +1,106 @@
+# The local checks, on every push to main and every pull request.
+#
+# No job here sees a secret. Actions are pinned to a commit, with the version
+# in a comment.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request replaces the run before it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Git Bash on the Windows runner too, so one script text runs on every runner
+# and on a developer machine.
+defaults:
+  run:
+    shell: bash
+
+env:
+  # Corepack must not stop to ask before it downloads pnpm.
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+
+jobs:
+  checks:
+    name: Checks
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # This repository never names the project its first files were modelled
+      # on, in a file or in a path. The name is put together from two halves,
+      # so this file passes its own check.
+      - name: Name guard
+        run: |
+          first='night'
+          second='maze'
+          pattern="${first}[ _.-]*${second}"
+          if git grep -n -i -E "$pattern" -- . || git ls-files | grep -i -E "$pattern"; then
+            echo "::error::A name that must not appear in this repository was found, see above."
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      # Corepack ships with Node 22 and installs the pnpm version that
+      # `packageManager` in package.json names, so no third-party action is
+      # needed and the version has one source.
+      - name: Set up pnpm
+        run: corepack enable
+
+      # Installs the version rust-toolchain.toml pins, with clippy and rustfmt.
+      - name: Set up Rust
+        run: rustup toolchain install --no-self-update
+
+      - name: Cache the Rust build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # First: the Rust shell embeds dist/ and does not compile without it.
+      - name: Build the page
+        run: pnpm build
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Page tests
+        run: pnpm test
+
+      - name: Rust format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --workspace --locked

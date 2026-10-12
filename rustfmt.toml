@@ -1,0 +1,5 @@
+# Stable options only, so `cargo fmt --check` is quiet on a stable toolchain.
+max_width = 100
+tab_spaces = 4
+newline_style = "Unix"
+use_small_heuristics = "Default"
