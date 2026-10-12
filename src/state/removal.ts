@@ -114,11 +114,18 @@ export function removalRows(
       what: WHAT[folder] ?? 'deleted with everything in it',
     })),
     ...plan.root_files.map(file => ({ name: file, what: WHAT[file] ?? 'deleted' })),
-    ...plan.unrecognised_root_files.map(file =>
-      includeUnrecognised
-        ? { name: file, what: 'deleted too, although the launcher does not recognise it' }
-        : { name: file, what: 'kept: not a file this launcher recognises', keep: true }
-    ),
+    ...plan.unrecognised_root_files.map(file => {
+      const withProxy = plan.kept_with_proxy.includes(file);
+      if (includeUnrecognised) {
+        return {
+          name: file,
+          what: withProxy
+            ? 'deleted too, together with winhttp.dll'
+            : 'deleted too, although the launcher does not recognise it',
+        };
+      }
+      return { name: file, what: `kept: ${keptReason(plan, file)}`, keep: true };
+    }),
     ...plan.kept.map(name => ({
       name: shown(name),
       what: 'kept: it is not what its name says',
@@ -129,9 +136,45 @@ export function removalRows(
 }
 
 /**
+ * Why a full removal leaves `name` in the game folder. The loader files are
+ * ones the launcher knows, and they stay all the same next to a `winhttp.dll`
+ * it does not recognise: that file reads them.
+ */
+export function keptReason(plan: RemovalPlan, name: string): string {
+  if (plan.kept_with_proxy.includes(name)) {
+    return 'it belongs to winhttp.dll, which this launcher does not recognise';
+  }
+  if (plan.unrecognised_root_files.includes(name)) return 'not a file this launcher recognises';
+  return 'it is not what its name says';
+}
+
+/**
+ * What the tick box says under its first line: why the files stay, and what
+ * staying means.
+ */
+export function unrecognisedHelp(plan: RemovalPlan): string {
+  const several = plan.unrecognised_root_files.length > 1;
+  const withProxy = plan.kept_with_proxy;
+  const why =
+    withProxy.length > 0
+      ? `The launcher does not recognise winhttp.dll, so it stays unless you tick this, and ${withProxy.join(
+          ' and '
+        )} ${withProxy.length > 1 ? 'stay' : 'stays'} with it: winhttp.dll reads ${
+          withProxy.length > 1 ? 'them' : 'it'
+        }, so they go or stay together.`
+      : several
+        ? 'The launcher does not recognise these files, so they stay unless you tick this.'
+        : 'The launcher does not recognise this file, so it stays unless you tick this.';
+  return `${why} While ${several ? 'they stay' : 'it stays'} without BepInEx, the launcher reports an unsupported BepInEx, until a second removal includes ${
+    several ? 'them' : 'it'
+  }.`;
+}
+
+/**
  * Whether a full removal left root files of BepInEx behind that the launcher
- * did not recognise. While they stay, the launcher reports an unsupported
- * BepInEx, until a second removal includes them.
+ * did not recognise, or that stayed with a `winhttp.dll` it did not
+ * recognise. While they stay, the launcher reports an unsupported BepInEx,
+ * until a second removal includes them.
  */
 export function leftUnrecognised(plan: RemovalPlan, outcome: RemovalOutcome): string[] {
   return outcome.kept.filter(name => plan.unrecognised_root_files.includes(name));

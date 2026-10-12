@@ -7,11 +7,13 @@ import {
   foreignRows,
   hasAnything,
   hasMod,
+  keptReason,
   leftUnrecognised,
   needsSecondConfirmation,
   nothingSelected,
   removalRows,
   shown,
+  unrecognisedHelp,
   type RemovalMode,
 } from '../state/removal';
 import { message, useLauncher } from '../state/store';
@@ -75,6 +77,9 @@ export function RemoveModal() {
     } catch (error) {
       setProblem(message(error));
       setStep('choose');
+      // The game folder may look different now: Steam may have begun an
+      // update, or a part of the removal may be done. The list follows it.
+      removalPlan().then(setPlan, () => undefined);
     }
   };
 
@@ -148,11 +153,7 @@ export function RemoveModal() {
               {outcome.kept.map(name => (
                 <li className="keep" key={name}>
                   <b>{shown(name)}</b>
-                  <span>
-                    {left.includes(name)
-                      ? 'not a file this launcher recognises'
-                      : 'it is not what its name says'}
-                  </span>
+                  <span>{keptReason(plan, name)}</span>
                 </li>
               ))}
             </ul>
@@ -163,8 +164,8 @@ export function RemoveModal() {
             <Icon name="warn" />
             <span>
               <b>{left.join(', ')} stayed.</b> While {left.length > 1 ? 'they are' : 'it is'} there
-              without BepInEx, the launcher reports an unsupported BepInEx and Install is blocked.
-              To clear that, open Remove mod again and tick the box that includes{' '}
+              without BepInEx, the launcher reports an unsupported BepInEx and Install stops with
+              that reason. To clear that, open Remove mod again and tick the box that includes{' '}
               {left.length > 1 ? 'them' : 'it'}.
             </span>
           </div>
@@ -300,11 +301,7 @@ export function RemoveModal() {
               </i>
               <span>
                 Also delete {plan.unrecognised_root_files.join(', ')}
-                <span>
-                  {plan.unrecognised_root_files.length > 1
-                    ? 'The launcher does not recognise these files, so they stay unless you tick this. While they stay without BepInEx, the launcher reports an unsupported BepInEx, until a second removal includes them.'
-                    : 'The launcher does not recognise this file, so it stays unless you tick this. While it stays without BepInEx, the launcher reports an unsupported BepInEx, until a second removal includes it.'}
-                </span>
+                <span>{unrecognisedHelp(plan)}</span>
               </span>
             </button>
           )}

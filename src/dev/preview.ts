@@ -86,6 +86,7 @@ const PLAN_OURS: RemovalPlan = {
   folders: ['dotnet', 'BepInEx'],
   root_files: ['winhttp.dll', 'doorstop_config.ini', '.doorstop_version', 'changelog.txt'],
   unrecognised_root_files: [],
+  kept_with_proxy: [],
   kept: [],
   foreign: [],
   mod_only_recommended: false,
@@ -101,12 +102,16 @@ const PLAN_FOREIGN: RemovalPlan = {
   mod_only_recommended: true,
 };
 
-/** A BepInEx somebody else installed: the launcher does not know two of its root files. */
+/**
+ * A BepInEx somebody else installed: the launcher does not know its
+ * `winhttp.dll`, so the two files that one reads stay with it.
+ */
 const PLAN_UNRECOGNISED: RemovalPlan = {
   ...PLAN_FOREIGN,
   bepinex: { kind: 'foreign' },
-  root_files: ['.doorstop_version', 'changelog.txt'],
-  unrecognised_root_files: ['winhttp.dll', 'doorstop_config.ini'],
+  root_files: ['changelog.txt'],
+  unrecognised_root_files: ['winhttp.dll', 'doorstop_config.ini', '.doorstop_version'],
+  kept_with_proxy: ['doorstop_config.ini', '.doorstop_version'],
 };
 
 const PREVIEWS: Record<string, Preview> = {
@@ -305,7 +310,7 @@ const PREVIEWS: Record<string, Preview> = {
           reason: 'winhttp.dll is in the game folder without BepInEx beside it',
         },
       },
-      kept: ['winhttp.dll', 'doorstop_config.ini'],
+      kept: ['winhttp.dll', 'doorstop_config.ini', '.doorstop_version'],
       backup_dir: 'C:\\Users\\friend\\AppData\\Local\\OaModLauncher\\backups\\2026-10-12_18-30-14',
     },
   },

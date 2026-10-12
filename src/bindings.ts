@@ -191,9 +191,10 @@ export type RemovalOutcome = {
 	/**  What the window should show now. */
 	snapshot: Snapshot,
 	/**
-	 *  What was left in the game folder on purpose, relative to it: the
-	 *  unrecognised root files that were not included, and everything in
-	 *  [`RemovalPlan::kept`].
+	 *  What was left in the game folder on purpose, relative to it:
+	 *  [`RemovalPlan::unrecognised_root_files`] when they were not included
+	 *  (the loader files kept with an unrecognised `winhttp.dll` among them),
+	 *  and everything in [`RemovalPlan::kept`].
 	 */
 	kept: string[],
 	/**  Where other people's files were copied to, when there were any. */
@@ -219,14 +220,23 @@ export type RemovalPlan = {
 	 */
 	root_files: string[],
 	/**
-	 *  Root files of BepInEx whose content the launcher does not recognise.
-	 *  A full removal keeps them unless it is told to include them.
+	 *  Root files of BepInEx a full removal keeps unless it is told to
+	 *  include them: the ones whose content the launcher does not recognise,
+	 *  and the ones in [`RemovalPlan::kept_with_proxy`].
 	 */
 	unrecognised_root_files: string[],
 	/**
+	 *  The part of [`RemovalPlan::unrecognised_root_files`] the launcher does
+	 *  recognise and keeps all the same, because `winhttp.dll` is one it does
+	 *  not recognise: `doorstop_config.ini` and `.doorstop_version` stay or
+	 *  go with the proxy DLL that reads them.
+	 */
+	kept_with_proxy: string[],
+	/**
 	 *  What a full removal never deletes although it has a name of BepInEx,
-	 *  because it is not what the name says: a `dotnet` folder without the
-	 *  .NET runtime in it, or a folder under the name of a root file.
+	 *  because it is not what the name says: a `dotnet` folder that holds
+	 *  files and no .NET runtime, a folder under the name of a root file, or a file
+	 *  under the name `dotnet` or `BepInEx`.
 	 */
 	kept: string[],
 	/**

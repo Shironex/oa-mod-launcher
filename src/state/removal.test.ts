@@ -4,9 +4,11 @@ import {
   defaultMode,
   foreignNames,
   hasAnything,
+  keptReason,
   leftUnrecognised,
   needsSecondConfirmation,
   removalRows,
+  unrecognisedHelp,
 } from './removal';
 
 /** BepInEx is the launcher's own and nobody else's files are there. */
@@ -17,6 +19,7 @@ const OURS: RemovalPlan = {
   folders: ['dotnet', 'BepInEx'],
   root_files: ['winhttp.dll', 'doorstop_config.ini', '.doorstop_version', 'changelog.txt'],
   unrecognised_root_files: [],
+  kept_with_proxy: [],
   kept: [],
   foreign: [],
   mod_only_recommended: false,
@@ -91,6 +94,46 @@ describe('the list', () => {
       keep: true,
     });
     expect(removalRows(plan, 'all', true).at(-1)?.keep).toBeUndefined();
+  });
+
+  it('the loader files stay or go with a winhttp.dll the launcher does not recognise', () => {
+    const plan = {
+      ...OURS,
+      root_files: ['changelog.txt'],
+      unrecognised_root_files: ['winhttp.dll', 'doorstop_config.ini', '.doorstop_version'],
+      kept_with_proxy: ['doorstop_config.ini', '.doorstop_version'],
+    };
+    const kept = removalRows(plan, 'all', false);
+    expect(kept.find(row => row.name === 'winhttp.dll')).toEqual({
+      name: 'winhttp.dll',
+      what: 'kept: not a file this launcher recognises',
+      keep: true,
+    });
+    expect(kept.find(row => row.name === '.doorstop_version')).toEqual({
+      name: '.doorstop_version',
+      what: 'kept: it belongs to winhttp.dll, which this launcher does not recognise',
+      keep: true,
+    });
+    expect(removalRows(plan, 'all', true).find(row => row.name === 'doorstop_config.ini')).toEqual({
+      name: 'doorstop_config.ini',
+      what: 'deleted too, together with winhttp.dll',
+    });
+    expect(unrecognisedHelp(plan)).toContain(
+      'doorstop_config.ini and .doorstop_version stay with it'
+    );
+    expect(unrecognisedHelp({ ...plan, kept_with_proxy: [] })).toContain(
+      'does not recognise these files'
+    );
+  });
+
+  it('a file under the name BepInEx is kept and named', () => {
+    const plan = { ...OURS, folders: ['dotnet'], kept: ['BepInEx'] };
+    expect(removalRows(plan, 'all', false).at(-1)).toEqual({
+      name: 'BepInEx',
+      what: 'kept: it is not what its name says',
+      keep: true,
+    });
+    expect(keptReason(plan, 'BepInEx')).toBe('it is not what its name says');
   });
 
   it('what is not what its name says is always kept', () => {
