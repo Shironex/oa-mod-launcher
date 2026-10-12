@@ -15,7 +15,7 @@ import {
   type Snapshot,
 } from '../bindings';
 import type { Preview } from '../dev/preview';
-import { detailsText, type Action } from './view';
+import { detailsText, type Action, type LauncherUpdateState } from './view';
 
 /** The dialog that covers the window, if any. */
 export type Dialog = 'settings' | 'about' | 'remove' | null;
@@ -32,6 +32,10 @@ interface LauncherStore {
   fresh: boolean;
   /** The game was started while its first, slow start was still ahead. */
   firstRun: boolean;
+  /** The launcher's own update. */
+  launcher: LauncherUpdateState;
+  /** The launcher version whose tag was put away since this launcher started. */
+  dismissedLauncher: string | null;
   dialog: Dialog;
   /** Set while the page shows a fixed state from `src/dev/preview.ts`. */
   preview: Preview | null;
@@ -47,7 +51,18 @@ interface LauncherStore {
   removalPlan: () => Promise<RemovalPlan>;
   removeMod: () => Promise<void>;
   removeAll: (includeUnrecognised: boolean) => Promise<RemovalOutcome>;
+  /** `quiet` keeps a failed check to itself: nobody asked for the one on start. */
+  checkLauncherUpdate: (quiet?: boolean) => Promise<void>;
+  installLauncherUpdate: () => Promise<void>;
 }
+
+const NO_LAUNCHER_UPDATE: LauncherUpdateState = {
+  update: null,
+  checking: false,
+  installing: false,
+  progress: null,
+  error: null,
+};
 
 /** A rejected command carries a sentence from the Rust side. */
 export function message(error: unknown): string {
@@ -136,6 +151,9 @@ export const useLauncher = create<LauncherStore>((set, get) => {
     }
   };
 
+  const setLauncher = (change: Partial<LauncherUpdateState>) =>
+    set({ launcher: { ...get().launcher, ...change } });
+
   return {
     snapshot: null,
     progress: null,
@@ -145,6 +163,8 @@ export const useLauncher = create<LauncherStore>((set, get) => {
     fatal: null,
     fresh: false,
     firstRun: false,
+    launcher: NO_LAUNCHER_UPDATE,
+    dismissedLauncher: null,
     dialog: null,
     preview: null,
 
@@ -161,15 +181,36 @@ export const useLauncher = create<LauncherStore>((set, get) => {
         }
       }
 
+      // The setting lives in the state file. When that cannot be read the
+      // setting is unknown, and the launcher's own update is still looked
+      // for: a launcher in that state is the one that needs it most.
+      let checkOnStart = true;
+      let modCheck = false;
       try {
         await events.installProgress.listen(event => set({ progress: event.payload }));
         await events.snapshotChanged.listen(event => accept(event.payload));
         const snapshot = await commands.snapshot();
         accept(snapshot);
-        if (snapshot.check_on_start) await check();
+        checkOnStart = snapshot.check_on_start;
+        modCheck = checkOnStart;
       } catch (error) {
         set({ fatal: message(error) });
       }
+
+      // Two separate questions to two separate places, asked side by side.
+      // Neither waits for the other and neither fails with the other.
+      const own = (async () => {
+        try {
+          await events.launcherUpdateProgress.listen(event =>
+            setLauncher({ progress: event.payload })
+          );
+        } catch {
+          // Without the event the download still runs, it only shows no percent.
+        }
+        if (checkOnStart) await get().checkLauncherUpdate(true);
+      })();
+      if (modCheck) await check();
+      await own;
     },
 
     run: async action => {
@@ -179,6 +220,9 @@ export const useLauncher = create<LauncherStore>((set, get) => {
           return;
         case 'copy_details':
           await navigator.clipboard.writeText(detailsText(get())).catch(() => undefined);
+          return;
+        case 'dismiss_launcher_update':
+          set({ dismissedLauncher: action.version });
           return;
       }
       // A preview has no Rust side to ask.
@@ -196,6 +240,8 @@ export const useLauncher = create<LauncherStore>((set, get) => {
           return attempt(action, commands.pickGameFolder);
         case 'open_logs':
           return get().openFolder('logs');
+        case 'update_launcher':
+          return get().installLauncherUpdate();
       }
     },
 
@@ -264,6 +310,28 @@ export const useLauncher = create<LauncherStore>((set, get) => {
       } catch (error) {
         await reload();
         throw error;
+      }
+    },
+
+    checkLauncherUpdate: async (quiet = false) => {
+      if (get().preview || get().launcher.checking || get().launcher.installing) return;
+      setLauncher({ checking: true, error: null });
+      try {
+        setLauncher({ update: await commands.checkLauncherUpdate(), checking: false });
+      } catch (error) {
+        setLauncher({ checking: false, error: quiet ? null : message(error) });
+      }
+    },
+
+    installLauncherUpdate: async () => {
+      if (get().preview || get().launcher.installing) return;
+      setLauncher({ installing: true, progress: null, error: null });
+      try {
+        // Answers only when it did not work: after a download that passed its
+        // check the launcher is closed and started again as the new version.
+        await commands.installLauncherUpdate();
+      } catch (error) {
+        setLauncher({ installing: false, progress: null, error: message(error) });
       }
     },
   };

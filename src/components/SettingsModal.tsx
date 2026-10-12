@@ -1,6 +1,7 @@
 import type { Snapshot } from '../bindings';
-import { sentence } from '../lib/format';
+import { percent, sentence } from '../lib/format';
 import { useLauncher } from '../state/store';
+import { launcherStatusText, type LauncherUpdateState } from '../state/view';
 import { Icon, type IconName } from './Icon';
 import { Modal } from './Modal';
 
@@ -14,6 +15,8 @@ const SECTIONS: { id: Section; label: string; icon: IconName }[] = [
 interface SettingsModalProps {
   section: Section;
   snapshot: Snapshot | null;
+  /** The launcher's own update. Left out, the row only names the version. */
+  launcher?: LauncherUpdateState;
   /** Why nothing in the game folder may be changed right now, or null. */
   locked: string | null;
   /** Whether the game folder holds anything the launcher could remove. */
@@ -23,7 +26,14 @@ interface SettingsModalProps {
 }
 
 /** Settings: where the game lives, the update check, the way to the removal, and About. */
-export function SettingsModal({ section, snapshot, locked, canRemove, error }: SettingsModalProps) {
+export function SettingsModal({
+  section,
+  snapshot,
+  launcher,
+  locked,
+  canRemove,
+  error,
+}: SettingsModalProps) {
   const openDialog = useLauncher(store => store.openDialog);
   const run = useLauncher(store => store.run);
   const setCheckOnStart = useLauncher(store => store.setCheckOnStart);
@@ -140,19 +150,13 @@ export function SettingsModal({ section, snapshot, locked, canRemove, error }: S
           <h2 className="m-h">About</h2>
           <p className="m-sub">OA Mod Launcher{version ? ` ${version}` : ''}</p>
           <div>
-            <div className="m-row">
-              <div>
-                <b>Launcher version</b>
-                <span>{version ?? 'unknown'}</span>
-                <span className="path sel">github.com/Shironex/oa-mod-launcher</span>
-              </div>
-            </div>
+            <LauncherVersionRow version={version ?? 'unknown'} launcher={launcher} />
             <div className="m-row">
               <div>
                 <b>What it talks to</b>
                 <span>
-                  Only GitHub, for the newest OA Mod and for BepInEx. Nothing is uploaded, and the
-                  log stays on this PC.
+                  Only GitHub, for the newest OA Mod, for BepInEx and for the launcher itself.
+                  Nothing is uploaded, and the log stays on this PC.
                 </span>
               </div>
             </div>
@@ -188,5 +192,64 @@ export function SettingsModal({ section, snapshot, locked, canRemove, error }: S
         </div>
       )}
     </Modal>
+  );
+}
+
+/**
+ * The launcher's own version and update. One button: it checks, and once a
+ * newer launcher was found it installs that one. What it shows is what the
+ * Rust side answered, the page asks nobody else.
+ */
+function LauncherVersionRow({
+  version,
+  launcher,
+}: {
+  version: string;
+  launcher?: LauncherUpdateState;
+}) {
+  const checkLauncherUpdate = useLauncher(store => store.checkLauncherUpdate);
+  const installLauncherUpdate = useLauncher(store => store.installLauncherUpdate);
+
+  const newer = launcher?.update?.kind === 'available' ? launcher.update : null;
+  const busy = launcher ? launcher.checking || launcher.installing : false;
+  const done = percent(launcher?.progress?.received ?? 0, launcher?.progress?.total ?? 0);
+
+  return (
+    <div className="m-row">
+      <div>
+        <b>Launcher version</b>
+        <span role="status" aria-live="polite">
+          {launcher ? launcherStatusText(version, launcher) : version}
+        </span>
+        {launcher?.installing && (
+          <span
+            className="m-bar"
+            role="progressbar"
+            aria-label="Launcher update progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={done}
+          >
+            <i style={{ width: `${done}%` }} />
+          </span>
+        )}
+        {newer?.notes && !launcher?.installing && <span className="rel sel">{newer.notes}</span>}
+        {launcher?.error && (
+          <span className="fail" role="alert">
+            {sentence(launcher.error)}
+          </span>
+        )}
+        <span className="path sel">github.com/Shironex/oa-mod-launcher</span>
+      </div>
+      <button
+        type="button"
+        className={newer ? 'sbtn tee' : 'sbtn'}
+        disabled={busy}
+        onClick={() => void (newer ? installLauncherUpdate() : checkLauncherUpdate())}
+      >
+        {newer && <Icon name="up" />}
+        {newer ? `Update to ${newer.version}` : 'Check for updates'}
+      </button>
+    </div>
   );
 }

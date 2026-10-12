@@ -11,6 +11,8 @@
 import {
   UNKNOWN_BUILD,
   type BepInEx,
+  type LauncherUpdate,
+  type LauncherUpdateProgress,
   type Phase,
   type Progress,
   type Snapshot,
@@ -27,7 +29,9 @@ export type Action =
   | { type: 'play' }
   | { type: 'open_logs' }
   | { type: 'copy_details' }
-  | { type: 'clear_error' };
+  | { type: 'clear_error' }
+  | { type: 'update_launcher' }
+  | { type: 'dismiss_launcher_update'; version: string };
 
 export interface CtaView {
   /** `primary` is the yellow button, `busy` fills with progress, `off` is disabled. */
@@ -61,6 +65,32 @@ export interface HoleView {
   state: 'done' | 'now' | 'next';
 }
 
+/** The yellow tag tied to the card: a newer launcher can be installed. */
+export interface SlipView {
+  /** The version it names, which "Later" hides until the next start. */
+  version: string;
+  text: string;
+  /** A failed update. The text is then the reason. */
+  failed: boolean;
+  /** The words of the link that installs it. Missing while it cannot run. */
+  install?: string;
+  /** Whether it can be put away. Not during the download, so a failure is seen. */
+  canDismiss: boolean;
+}
+
+/** The launcher's own update, as the Rust side last reported it. */
+export interface LauncherUpdateState {
+  /** What the last check found. Null before the first check has finished. */
+  update: LauncherUpdate | null;
+  /** A check is running. */
+  checking: boolean;
+  /** The new launcher is being downloaded. The launcher restarts after it. */
+  installing: boolean;
+  progress: LauncherUpdateProgress | null;
+  /** Why the last check or install failed, as a sentence. */
+  error: string | null;
+}
+
 /** The right half of the card. */
 export type RightView =
   /** How to find the game folder. */
@@ -92,6 +122,7 @@ export interface View {
   /** Whether the game folder holds anything the launcher could remove. */
   canRemove: boolean;
   right: RightView;
+  slip?: SlipView;
 }
 
 export interface ViewInput {
@@ -109,10 +140,14 @@ export interface ViewInput {
   fresh: boolean;
   /** The game was started while its first, slow start was still ahead. */
   firstRun: boolean;
+  /** Left out, the launcher's own update plays no part in the view. */
+  launcher?: LauncherUpdateState;
+  /** The launcher version whose tag was put away since this launcher started. */
+  dismissedLauncher?: string | null;
 }
 
 /** The parts every status decides for itself. The rest is added after it. */
-type Core = Omit<View, 'locked' | 'canRemove' | 'right'>;
+type Core = Omit<View, 'locked' | 'canRemove' | 'right' | 'slip'>;
 
 const INSTALL_LOCK_NOTE: NoteView = {
   label: 'Locked',
@@ -126,7 +161,7 @@ const STEAM_BUSY_NOTE: NoteView = {
 
 export function deriveView(input: ViewInput): View {
   const { snapshot, fatal } = input;
-  if (fatal || !snapshot) return startView(fatal);
+  if (fatal || !snapshot) return { ...startView(fatal), slip: slipView(input, false) };
 
   const kind = snapshot.status.kind;
   let core = statusView(input, snapshot);
@@ -149,11 +184,72 @@ export function deriveView(input: ViewInput): View {
       snapshot.game !== null &&
       (snapshot.bepinex.kind !== 'absent' || snapshot.mod_installed !== null),
     right: rightView(snapshot),
+    slip: slipView(input, working),
   };
 }
 
+/**
+ * The tag for a newer launcher. It stays away once it was put away, except
+ * when the newest OA Mod needs that launcher: then it is the way forward.
+ * While an install or a removal runs it only tells, because the launcher is
+ * not replaced in the middle of one.
+ */
+function slipView(input: ViewInput, working: boolean): SlipView | undefined {
+  const { launcher, snapshot } = input;
+  if (launcher?.update?.kind !== 'available') return undefined;
+  const { version } = launcher.update;
+  const needed = snapshot?.remote.kind === 'launcher_too_old';
+  if (input.dismissedLauncher === version && !needed && !launcher.installing) return undefined;
+
+  if (launcher.installing) {
+    const received = launcher.progress?.received ?? 0;
+    const total = launcher.progress?.total ?? 0;
+    return {
+      version,
+      text:
+        total > 0
+          ? `Downloading launcher ${version}, ${percent(received, total)}%. It restarts by itself.`
+          : `Downloading launcher ${version}. It restarts by itself.`,
+      failed: false,
+      canDismiss: false,
+    };
+  }
+  if (launcher.error) {
+    return {
+      version,
+      text: `${sentence(launcher.error)} The launcher was not changed.`,
+      failed: true,
+      install: working ? undefined : 'Try again',
+      canDismiss: true,
+    };
+  }
+  return {
+    version,
+    text: `Launcher ${version} is ready.`,
+    failed: false,
+    install: working ? undefined : 'Restart and update',
+    canDismiss: true,
+  };
+}
+
+/** The line under "Launcher version" in the settings. */
+export function launcherStatusText(version: string, launcher: LauncherUpdateState): string {
+  const { update, progress } = launcher;
+  if (launcher.installing) {
+    const received = progress?.received ?? 0;
+    const total = progress?.total ?? 0;
+    return total > 0
+      ? `${version} · downloading the update, ${percent(received, total)}% (${megabytesOf(received, total)})`
+      : `${version} · downloading the update`;
+  }
+  if (launcher.checking) return `${version} · checking for updates`;
+  if (update?.kind === 'available') return `${version} · version ${update.version} is available`;
+  if (update?.kind === 'none') return `${version} · up to date`;
+  return version;
+}
+
 /** Before the first snapshot, and when the Rust side cannot be reached. */
-function startView(fatal: string | null): View {
+function startView(fatal: string | null): Omit<View, 'slip'> {
   return {
     fact: fatal ? 'launcher problem' : 'starting',
     ball: 0,
@@ -532,7 +628,7 @@ function withRemote(core: Core, snapshot: Snapshot, checking: boolean): Core {
         ...core.notes,
         {
           label: 'Launcher',
-          text: `This launcher (${snapshot.launcher_version}) is too old for the newest OA Mod. Get launcher ${remote.required} or newer from the page you got this one from.`,
+          text: `This launcher (${snapshot.launcher_version}) is too old for the newest OA Mod, which needs ${remote.required} or newer. Update the launcher in Settings, under About.`,
         },
       ],
     };

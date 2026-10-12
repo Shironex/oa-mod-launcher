@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { UNKNOWN_BUILD, type Snapshot, type Warning } from '../bindings';
-import { deriveView, detailsText, warningNote, type ViewInput } from './view';
+import {
+  deriveView,
+  detailsText,
+  launcherStatusText,
+  warningNote,
+  type LauncherUpdateState,
+  type ViewInput,
+} from './view';
 
 const MEGABYTE = 1024 * 1024;
 
@@ -305,7 +312,7 @@ describe('what the update check adds', () => {
   it('launcher too old: Install is off and the note names the launcher that is needed', () => {
     const old = view({ ...EMPTY, remote: { kind: 'launcher_too_old', required: '0.3.0' } });
     expect(old.cta).toEqual({ style: 'off', word: 'Install', sub: 'launcher too old' });
-    expect(old.notes.at(-1)?.text).toContain('Get launcher 0.3.0 or newer');
+    expect(old.notes.at(-1)?.text).toContain('needs 0.3.0 or newer');
   });
 
   it('launcher too old with the mod installed: Play still works', () => {
@@ -414,6 +421,106 @@ describe('without a snapshot', () => {
     expect(fatal.sentence).toBe('The launcher could not start.');
     expect(fatal.detail).toBe('The per-user application folder was not found.');
     expect(fatal.cta.action).toEqual({ type: 'look_again' });
+  });
+});
+
+describe('the launcher own update', () => {
+  const none: LauncherUpdateState = {
+    update: { kind: 'none' },
+    checking: false,
+    installing: false,
+    progress: null,
+    error: null,
+  };
+  const newer: LauncherUpdateState = {
+    ...none,
+    update: { kind: 'available', version: '0.2.0', notes: 'Finds the game on a second drive.' },
+  };
+
+  it('no tag without a newer launcher, and none when the page was told nothing', () => {
+    expect(view({}).slip).toBeUndefined();
+    expect(view({}, { launcher: none }).slip).toBeUndefined();
+    expect(view({}, { launcher: { ...none, update: null } }).slip).toBeUndefined();
+  });
+
+  it('a newer launcher: the tag names it and offers the update and Later', () => {
+    expect(view({}, { launcher: newer }).slip).toEqual({
+      version: '0.2.0',
+      text: 'Launcher 0.2.0 is ready.',
+      failed: false,
+      install: 'Restart and update',
+      canDismiss: true,
+    });
+  });
+
+  it('Later puts the tag away for that version only', () => {
+    expect(view({}, { launcher: newer, dismissedLauncher: '0.2.0' }).slip).toBeUndefined();
+    expect(view({}, { launcher: newer, dismissedLauncher: '0.1.9' }).slip).toBeDefined();
+  });
+
+  it('a release that needs the newer launcher brings the tag back', () => {
+    const needed = view(
+      { ...EMPTY, remote: { kind: 'launcher_too_old', required: '0.2.0' } },
+      { launcher: newer, dismissedLauncher: '0.2.0' }
+    );
+    expect(needed.slip?.install).toBe('Restart and update');
+  });
+
+  it('while an install or a removal runs the tag only tells', () => {
+    const working = view({ status: { kind: 'removing' } }, { launcher: newer });
+    expect(working.slip).toMatchObject({ text: 'Launcher 0.2.0 is ready.', install: undefined });
+  });
+
+  it('downloading: the percentage, and it cannot be put away', () => {
+    const downloading = view(
+      {},
+      {
+        launcher: { ...newer, installing: true, progress: { received: 1, total: 4 } },
+        dismissedLauncher: '0.2.0',
+      }
+    );
+    expect(downloading.slip).toEqual({
+      version: '0.2.0',
+      text: 'Downloading launcher 0.2.0, 25%. It restarts by itself.',
+      failed: false,
+      canDismiss: false,
+    });
+  });
+
+  it('a failed update says why and that nothing changed', () => {
+    const failed = view({}, { launcher: { ...newer, error: 'Could not reach the server' } });
+    expect(failed.slip).toMatchObject({
+      text: 'Could not reach the server. The launcher was not changed.',
+      failed: true,
+      install: 'Try again',
+    });
+  });
+
+  it('it is offered before the first snapshot too: a launcher that cannot start needs it most', () => {
+    const fatal = deriveView({
+      snapshot: null,
+      progress: null,
+      checking: false,
+      error: null,
+      failed: null,
+      fatal: 'The per-user application folder was not found',
+      fresh: false,
+      firstRun: false,
+      launcher: newer,
+    });
+    expect(fatal.slip?.install).toBe('Restart and update');
+  });
+
+  it('the line under the version in About', () => {
+    expect(launcherStatusText('0.1.0', { ...none, update: null })).toBe('0.1.0');
+    expect(launcherStatusText('0.1.0', none)).toBe('0.1.0 · up to date');
+    expect(launcherStatusText('0.1.0', { ...none, checking: true })).toBe(
+      '0.1.0 · checking for updates'
+    );
+    expect(launcherStatusText('0.1.0', newer)).toBe('0.1.0 · version 0.2.0 is available');
+    expect(launcherStatusText('0.1.0', { ...newer, installing: true })).toBe(
+      '0.1.0 · downloading the update'
+    );
   });
 });
 

@@ -21,6 +21,8 @@ export function App() {
   const fatal = useLauncher(store => store.fatal);
   const fresh = useLauncher(store => store.fresh);
   const firstRun = useLauncher(store => store.firstRun);
+  const launcher = useLauncher(store => store.launcher);
+  const dismissedLauncher = useLauncher(store => store.dismissedLauncher);
   const dialog = useLauncher(store => store.dialog);
   const start = useLauncher(store => store.start);
 
@@ -30,7 +32,19 @@ export function App() {
 
   return (
     <Window
-      state={{ snapshot, progress, checking, error, failed, fatal, fresh, firstRun, dialog }}
+      state={{
+        snapshot,
+        progress,
+        checking,
+        error,
+        failed,
+        fatal,
+        fresh,
+        firstRun,
+        launcher,
+        dismissedLauncher,
+        dialog,
+      }}
     />
   );
 }
@@ -75,6 +89,7 @@ export function Window({ state }: { state: WindowState }) {
         <SettingsModal
           section={dialog}
           snapshot={snapshot}
+          launcher={state.launcher}
           locked={view.locked}
           canRemove={view.canRemove}
           error={state.error}

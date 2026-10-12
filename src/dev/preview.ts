@@ -14,7 +14,7 @@ import {
   type Snapshot,
 } from '../bindings';
 import type { Dialog } from '../state/store';
-import type { Action } from '../state/view';
+import type { Action, LauncherUpdateState } from '../state/view';
 
 export interface Preview {
   snapshot: Snapshot | null;
@@ -25,6 +25,8 @@ export interface Preview {
   fatal: string | null;
   fresh: boolean;
   firstRun: boolean;
+  /** The launcher's own update. Left out, there is none. */
+  launcher?: LauncherUpdateState;
   /** The dialog that is open from the start. */
   dialog?: Dialog;
   /** What the remove dialog shows. */
@@ -85,6 +87,19 @@ const BEHIND: Snapshot = {
 };
 
 const WITH_GHOST_CADDY: Snapshot = { ...READY, foreign_plugins: ['GhostCaddy'] };
+
+/** A newer launcher was found. */
+const NEWER_LAUNCHER: LauncherUpdateState = {
+  update: {
+    kind: 'available',
+    version: '0.2.0',
+    notes: 'Finds the game on a second Steam library drive.\nThe first start message is clearer.',
+  },
+  checking: false,
+  installing: false,
+  progress: null,
+  error: null,
+};
 
 /** BepInEx is the launcher's own and nobody else's files are there. */
 const PLAN_OURS: RemovalPlan = {
@@ -297,6 +312,28 @@ const PREVIEWS: Record<string, Preview> = {
     plan: PLAN_OURS,
   },
   about: { ...QUIET, snapshot: READY, dialog: 'about' },
+
+  // The launcher's own update: the tag on the card, and the row under About.
+  'launcher-update': { ...QUIET, snapshot: READY, launcher: NEWER_LAUNCHER },
+  'launcher-updating': {
+    ...QUIET,
+    snapshot: READY,
+    launcher: {
+      ...NEWER_LAUNCHER,
+      installing: true,
+      progress: { received: 3 * MEGABYTE, total: 7 * MEGABYTE },
+    },
+  },
+  'launcher-update-failed': {
+    ...QUIET,
+    snapshot: READY,
+    launcher: {
+      ...NEWER_LAUNCHER,
+      error:
+        'The launcher update is not signed with a key this launcher trusts, so it was not installed',
+    },
+  },
+  'about-update': { ...QUIET, snapshot: READY, launcher: NEWER_LAUNCHER, dialog: 'about' },
   remove: { ...QUIET, snapshot: READY, dialog: 'remove', plan: PLAN_OURS },
   'remove-foreign': {
     ...QUIET,

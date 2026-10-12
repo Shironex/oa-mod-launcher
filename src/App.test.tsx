@@ -41,6 +41,24 @@ describe('the window', () => {
     expect(html).toMatch(/class="lnk red" disabled="" title="Close the game first\."/);
   });
 
+  it('Reset to Steam is offered only for a folder that was chosen by hand', () => {
+    expect(render('settings')).not.toContain('Reset to Steam');
+    expect(render('settings-chosen')).toContain('Reset to Steam');
+  });
+
+  it('a newer launcher is a tag on the card and a row under About', () => {
+    expect(render('up-to-date')).not.toContain('class="slip"');
+    const tagged = render('launcher-update');
+    expect(tagged).toContain('Launcher 0.2.0 is ready.');
+    expect(tagged).toContain('Restart and update');
+    expect(render('launcher-updating')).not.toContain('Later');
+    expect(render('launcher-update-failed')).toMatch(/role="alert">The launcher update is not/);
+    const about = render('about-update');
+    expect(about).toContain('0.1.0 · version 0.2.0 is available');
+    expect(about).toContain('Update to 0.2.0');
+    expect(render('about')).toContain('Check for updates');
+  });
+
   it('without a game folder the footer offers neither the folder nor the removal', () => {
     const html = render('game-not-found');
     expect(html).not.toContain('Game folder</button>');

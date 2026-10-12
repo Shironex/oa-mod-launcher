@@ -1,6 +1,6 @@
 import type { Folder, Snapshot } from '../bindings';
 import type { Dialog } from '../state/store';
-import type { Action, RightView, View } from '../state/view';
+import type { Action, RightView, SlipView, View } from '../state/view';
 import { Icon } from './Icon';
 import { MainButton } from './MainButton';
 
@@ -33,7 +33,56 @@ export function Scorecard({
   onOpenFolder,
 }: ScorecardProps) {
   return (
-    <div className="card">
+    <>
+      {view.slip && <Slip slip={view.slip} onAction={onAction} />}
+      <div className="card">
+        <ScorecardPages
+          view={view}
+          snapshot={snapshot}
+          onAction={onAction}
+          onOpenDialog={onOpenDialog}
+          onOpenFolder={onOpenFolder}
+        />
+      </div>
+    </>
+  );
+}
+
+/**
+ * The yellow tag tied to the card: a newer launcher was found. It never takes
+ * the focus. Its text is a status, and a failed update an alert. "Later" puts
+ * it away until the launcher is started again; during the download it cannot
+ * be put away, so a failure is always seen.
+ */
+function Slip({ slip, onAction }: { slip: SlipView; onAction: (action: Action) => void }) {
+  return (
+    <div className={slip.failed ? 'slip warn' : 'slip'} role="region" aria-label="Launcher update">
+      <Icon name={slip.failed ? 'warn' : 'up'} />
+      {/* The key makes a failure a new element, so it is announced as an alert. */}
+      <span key={String(slip.failed)} role={slip.failed ? 'alert' : 'status'}>
+        {slip.text}
+      </span>
+      {slip.install && (
+        <button type="button" className="lnk" onClick={() => onAction({ type: 'update_launcher' })}>
+          {slip.install}
+        </button>
+      )}
+      {slip.canDismiss && (
+        <button
+          type="button"
+          className="lnk"
+          onClick={() => onAction({ type: 'dismiss_launcher_update', version: slip.version })}
+        >
+          Later
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ScorecardPages({ view, snapshot, onAction, onOpenDialog, onOpenFolder }: ScorecardProps) {
+  return (
+    <>
       <section className="pg l" aria-label="Your scorecard">
         <div className="ph">
           <span>Your scorecard</span>
@@ -115,7 +164,7 @@ export function Scorecard({
       <section className="pg r" aria-label="About OA Mod">
         <RightPage right={view.right} />
       </section>
-    </div>
+    </>
   );
 }
 

@@ -267,6 +267,31 @@ body {
     height: calc(384 * var(--u));
     isolation: isolate;
   }
+  /* A newer launcher: a tag tied to the card, sticking out above it. The card
+     lies over its lower edge. */
+  .slip {
+    position: absolute;
+    left: calc(40 * var(--u));
+    bottom: calc(100% - 22 * var(--u));
+    max-width: calc(100% - 80 * var(--u));
+    padding: calc(10 * var(--u)) calc(16 * var(--u)) calc(32 * var(--u));
+    display: flex;
+    align-items: center;
+    gap: calc(14 * var(--u));
+    font-size: calc(15 * var(--u));
+    background: var(--color-tee-soft);
+    border: calc(2 * var(--u)) solid var(--color-ink);
+    border-radius: calc(10 * var(--u));
+    transform: rotate(-1.2deg);
+    white-space: nowrap;
+  }
+  .slip.warn {
+    background: var(--color-flag-soft);
+    white-space: normal;
+  }
+  .slip .ico {
+    flex: none;
+  }
   .card {
     position: relative;
     z-index: 1;
@@ -674,6 +699,23 @@ body {
   .m-row .fail {
     color: var(--color-flag-ink);
   }
+  /* The notes of a newer launcher, line breaks kept. */
+  .m-row .rel {
+    white-space: pre-line;
+    color: var(--color-ink);
+  }
+  .m-row .m-bar {
+    height: calc(8 * var(--u));
+    margin: calc(8 * var(--u)) 0;
+    border: calc(1.5 * var(--u)) solid var(--color-ink);
+    border-radius: calc(4 * var(--u));
+    overflow: hidden;
+  }
+  .m-bar i {
+    display: block;
+    height: 100%;
+    background: var(--color-tee);
+  }
   .m-row .side {
     display: flex;
     flex-direction: column;
@@ -693,6 +735,10 @@ body {
     background: var(--color-card);
     font: 700 calc(15 * var(--u)) / 1 var(--font-body);
     white-space: nowrap;
+  }
+  .win .sbtn.tee {
+    background: var(--color-tee);
+    color: var(--color-tee-ink);
   }
   .win .sbtn.red {
     background: var(--color-flag-ink);
