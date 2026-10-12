@@ -94,6 +94,27 @@ describe('the status table, row by row', () => {
     expect(updating.sentence).toBe('Putting OA Mod into the game folder.');
   });
 
+  it('2 installing: a progress report is ahead of the polled step, and wins', () => {
+    // What the page sets itself when Install is pressed, and the first report.
+    const started = view(
+      { ...EMPTY, status: { kind: 'installing', phase: 'checking' } },
+      {
+        fresh: true,
+        progress: { phase: 'downloading_bepinex', received: 16 * MEGABYTE, total: 32 * MEGABYTE },
+      }
+    );
+    expect(started.sentence).toBe('Downloading BepInEx.');
+    expect(started.cta.sub).toBe('20%');
+
+    // The download is over and the poll has not said so yet: the bar does not fall back.
+    const unpacking = view(
+      { ...EMPTY, status: { kind: 'installing', phase: 'downloading_bepinex' } },
+      { fresh: true, progress: { phase: 'installing_bepinex', received: 0, total: 0 } }
+    );
+    expect(unpacking.holes?.map(hole => hole.state)).toEqual(['done', 'now', 'next', 'next']);
+    expect(unpacking.cta.sub).toBe('40%');
+  });
+
   it('2 installing: a BepInEx step is a fresh install even when nobody said so', () => {
     const installing = view({ status: { kind: 'installing', phase: 'installing_bepinex' } });
     expect(installing.holes).toHaveLength(4);
@@ -120,6 +141,13 @@ describe('the status table, row by row', () => {
     const running = view({ status: { kind: 'game_running' } });
     expect(running.cta).toEqual({ style: 'off', word: 'Game is running', sub: 'OA Mod 0.2.0' });
     expect(running.links).toEqual([]);
+    // A failed check adds its note, and still nothing to press.
+    const offline = view({
+      status: { kind: 'game_running' },
+      remote: { kind: 'offline', reason: 'github.com did not answer' },
+    });
+    expect(offline.links).toEqual([]);
+    expect(offline.notes.at(-1)?.label).toBe('Offline');
     expect(running.locked).toBe('Close the game first.');
     expect(running.notes[0]?.text).toContain('Windows keeps the mod files locked');
   });

@@ -433,7 +433,20 @@ const MOD_ONLY = {
   ends: [85, 100],
 } as const;
 
-function installingView(input: ViewInput, snapshot: Snapshot, phase: Phase): Core {
+/** The steps of an install in the order they run. */
+const PHASES: readonly Phase[] = [
+  'checking',
+  'downloading_bepinex',
+  'installing_bepinex',
+  'downloading_mod',
+  'installing_mod',
+];
+
+function installingView(input: ViewInput, snapshot: Snapshot, polled: Phase): Core {
+  // The snapshot learns the step from the poll, every few seconds. A progress
+  // report arrives at once, so the later of the two is where the install is.
+  const reported = input.progress?.phase ?? polled;
+  const phase = PHASES.indexOf(reported) > PHASES.indexOf(polled) ? reported : polled;
   // A BepInEx step proves a fresh install even when nobody said so.
   const fresh = input.fresh || phase === 'downloading_bepinex' || phase === 'installing_bepinex';
   const plan = fresh ? FRESH : MOD_ONLY;
@@ -489,11 +502,15 @@ function installingView(input: ViewInput, snapshot: Snapshot, phase: Phase): Cor
 /** What the last update check adds to a state: a failed check, or a launcher that is too old. */
 function withRemote(core: Core, snapshot: Snapshot, checking: boolean): Core {
   const { remote } = snapshot;
+  // While the game runs nothing can be pressed, a new check included.
+  const running = snapshot.status.kind === 'game_running';
   if (checking) return { ...core, pill: { tone: 'wait', text: 'checking for updates' } };
   if (remote.kind === 'offline') {
     return {
       ...core,
-      links: [...core.links, { label: 'Check again', action: { type: 'check' } }],
+      links: running
+        ? core.links
+        : [...core.links, { label: 'Check again', action: { type: 'check' } }],
       notes: [
         ...core.notes,
         {
