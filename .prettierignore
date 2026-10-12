@@ -7,3 +7,7 @@ src-tauri/icons/
 # Package managers own the format of their lockfiles.
 Cargo.lock
 pnpm-lock.yaml
+
+# Compared byte for byte with what the scripts write, or covered by a signature.
+scripts/fixtures/
+crates/core/tests/data/
