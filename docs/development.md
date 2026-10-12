@@ -135,6 +135,8 @@ In the settings of `Shironex/oa-mod-launcher`:
    - `UPDATER_PRIVATE_KEY`: the content of the updater key file (`updater.key`), one line of base64.
    - `UPDATER_PRIVATE_KEY_PASSWORD`: its password.
 
+3. Turn on "Private vulnerability reporting" (Settings, Advanced Security). [SECURITY.md](../SECURITY.md) sends reports there, and it is off by default.
+
 No repository variable is needed. The workflow's own token writes the release (`contents: write` on the publish job only).
 
 ### Release the launcher
@@ -174,7 +176,9 @@ On every push to `main`, CI also builds the installer signed with the developmen
 
 ### What the mod repository's release runs from here
 
-The mod repository (`Shironex/oa-mod`) checks this repository out at a pinned commit into a subfolder named `launcher/` and uses three things from it: `scripts/build-manifest.mjs`, `scripts/sign-file.mjs` and the example `verify_manifest`. I ran the commands below with this repository cloned into `launcher/` of an empty folder, from that outer folder. Signed with the development key, the last step refuses the manifest with "not a signature ... by the release key", which is what it has to do for any key but the real one.
+The mod repository (`Shironex/oa-mod`) checks this repository out at a pinned commit into a subfolder named `launcher/` and uses three things from it: `scripts/build-manifest.mjs`, `scripts/sign-file.mjs` and the example `verify_manifest`. I ran the commands below as they stand, with this repository cloned into `launcher/` of an empty folder and a throwaway key with a password in place of the real one. The last step then refuses the manifest with "not a signature ... by the release key", which is what it has to do for any key but the real one. The real key has not signed anything yet.
+
+The commit of this repository that the mod workflow checks out is that workflow's own choice: a commit SHA in its checkout step, not a branch.
 
 In its `build` job (no secret, no install needed, Node 22 only):
 

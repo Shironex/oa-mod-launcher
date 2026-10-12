@@ -49,4 +49,4 @@ I do not ask for a `CHANGELOG.md` entry in pull requests. I write it when I make
 
 ## Commits and pull requests
 
-Conventional commits, always with a scope, in lowercase: `type(scope): summary`. The types are `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `ci`, `build` and `perf`. The scopes in use are `core`, `shell`, `window`, `updater`, `scripts`, `release`, `repo` and `deps` (`git log --format=%s` shows them). One logical change per commit. The title of the pull request has the same shape.
+Conventional commits, always with a scope, in lowercase: `type(scope): summary`. The types are `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `ci`, `build` and `perf`. The scopes in use are `core`, `shell`, `window`, `updater`, `scripts`, `release`, `notices` and `repo` (`git log --format=%s` shows them). One logical change per commit. The title of the pull request has the same shape.

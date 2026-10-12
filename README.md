@@ -27,14 +27,16 @@ Windows 10 or 11, 64 bit. No admin rights needed.
 
 ## What it changes on your PC, and how to undo it
 
-| Where                              | What                                                                                                                            | How to undo it                                           |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| The game folder                    | The folders `BepInEx` and `dotnet`, and the files `winhttp.dll`, `doorstop_config.ini`, `.doorstop_version` and `changelog.txt` | **Remove mod** in the launcher, then "Remove everything" |
-| The game folder, by BepInEx itself | On the first start BepInEx writes its own files into the `BepInEx` folder (interop, cache, config, logs)                        | The same: they are inside the folder that is removed     |
-| `%LOCALAPPDATA%\OaModLauncher`     | The launcher's settings, its log, downloads in progress, and backups of other plugins made before a full removal                | Delete the folder after uninstalling                     |
-| The launcher itself                | Installed for your user only                                                                                                    | "Add or remove programs" in Windows                      |
+| Where                                        | What                                                                                                                            | How to undo it                                            |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| The game folder                              | The folders `BepInEx` and `dotnet`, and the files `winhttp.dll`, `doorstop_config.ini`, `.doorstop_version` and `changelog.txt` | **Remove mod** in the launcher, then "Remove everything"  |
+| The game folder, by BepInEx itself           | On the first start BepInEx writes its own files into the `BepInEx` folder (interop, cache, config, logs)                        | The same: they are inside the folder that is removed      |
+| `%LOCALAPPDATA%\OaModLauncher`               | The launcher's settings, its log, downloads in progress, and backups of other plugins made before a full removal                | Delete the folder after uninstalling                      |
+| The launcher itself                          | Installed for your user only                                                                                                    | "Add or remove programs" in Windows                       |
+| `%LOCALAPPDATA%\com.shironex.oamod.launcher` | The data of the window (WebView2 keeps a profile per program)                                                                   | The uninstaller offers to delete it, or delete the folder |
+| Your temporary folder                        | The new installer, while the launcher updates itself                                                                            | Safe to delete afterwards                                 |
 
-It writes nowhere else, changes no game file that Steam installed, and does not touch your saves.
+It changes no game file that Steam installed and does not touch your saves. The uninstaller removes the program; the `OaModLauncher` folder stays until you delete it.
 
 A few things worth knowing about the removal:
 
