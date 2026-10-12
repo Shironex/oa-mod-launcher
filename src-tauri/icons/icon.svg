@@ -1,5 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <!-- Placeholder icon: replace it with the real one. -->
-  <rect width="1024" height="1024" rx="200" fill="#2f9c58" />
-  <circle cx="512" cy="512" r="230" fill="#ffffff" />
+  <!-- The red flag on the green, in the colours of the window. Source of
+       every file in this folder: pnpm tauri icon src-tauri/icons/icon.svg -->
+  <defs>
+    <clipPath id="tile">
+      <rect width="1024" height="1024" rx="208" />
+    </clipPath>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect width="1024" height="1024" fill="#6fc3f0" />
+    <circle cx="232" cy="236" r="96" fill="#fff3b8" />
+    <ellipse cx="300" cy="1010" rx="760" ry="440" fill="#62bd6f" />
+    <ellipse cx="760" cy="1080" rx="820" ry="440" fill="#2f9c58" />
+    <ellipse cx="540" cy="806" rx="372" ry="92" fill="#8fdc7c" />
+    <ellipse cx="578" cy="800" rx="78" ry="24" fill="#0f3d2a" />
+    <rect x="562" y="212" width="32" height="596" rx="16" fill="#ffffff" />
+    <path d="M594 228 L886 372 L594 516 Z" fill="#e2432b" />
+    <ellipse cx="352" cy="850" rx="58" ry="14" fill="#0f3d2a" opacity="0.28" />
+    <circle cx="352" cy="792" r="62" fill="#ffffff" />
+  </g>
 </svg>
