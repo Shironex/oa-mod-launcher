@@ -29,6 +29,8 @@ pub(crate) fn builder() -> Builder<tauri::Wry> {
             commands::set_check_on_start,
             commands::open_folder,
         ])
+        // The one text of the core the page has to compare with.
+        .constant("UNKNOWN_BUILD", oa_mod_launcher_core::UNKNOWN_BUILD)
         .events(collect_events![
             commands::InstallProgress,
             commands::SnapshotChanged

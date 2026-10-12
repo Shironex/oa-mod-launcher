@@ -60,6 +60,9 @@ export const events = {
 	snapshotChanged: makeEvent<SnapshotChanged>("snapshot-changed"),
 };
 
+/* Constants */
+export const UNKNOWN_BUILD = "unknown build" as const;
+
 /* Types */
 /**  What kind of BepInEx the game folder holds. */
 export type BepInEx = 

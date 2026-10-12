@@ -6,9 +6,15 @@
 //
 // Every version, path and sentence in this file is an example.
 
-import type { Progress, RemovalOutcome, RemovalPlan, Snapshot } from '../bindings';
+import {
+  UNKNOWN_BUILD,
+  type Progress,
+  type RemovalOutcome,
+  type RemovalPlan,
+  type Snapshot,
+} from '../bindings';
 import type { Dialog } from '../state/store';
-import { UNKNOWN_BUILD, type Action } from '../state/view';
+import type { Action } from '../state/view';
 
 export interface Preview {
   snapshot: Snapshot | null;

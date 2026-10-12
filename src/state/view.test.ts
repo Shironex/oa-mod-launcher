@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Snapshot, Warning } from '../bindings';
-import { deriveView, detailsText, UNKNOWN_BUILD, warningNote, type ViewInput } from './view';
+import { UNKNOWN_BUILD, type Snapshot, type Warning } from '../bindings';
+import { deriveView, detailsText, warningNote, type ViewInput } from './view';
 
 const MEGABYTE = 1024 * 1024;
 

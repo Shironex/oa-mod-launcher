@@ -8,15 +8,15 @@
 //
 // Every state has a sentence of its own. None is told apart by colour alone.
 
-import type { BepInEx, Phase, Progress, Snapshot, Warning } from '../bindings';
+import {
+  UNKNOWN_BUILD,
+  type BepInEx,
+  type Phase,
+  type Progress,
+  type Snapshot,
+  type Warning,
+} from '../bindings';
 import { megabytes, megabytesOf, percent, sentence } from '../lib/format';
-
-/**
- * What the snapshot says for a mod file the launcher did not install. The
- * same text as `UNKNOWN_BUILD` in the Rust core, which is not part of the
- * generated bindings.
- */
-export const UNKNOWN_BUILD = 'unknown build';
 
 /** Something a button on the main screen asks the store to do. */
 export type Action =
