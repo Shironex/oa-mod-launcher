@@ -94,7 +94,8 @@ pub struct RemovalPlan {
     pub unrecognised_root_files: Vec<String>,
     /// What a full removal never deletes although it has a name of BepInEx,
     /// because it is not what the name says: a `dotnet` folder without the
-    /// .NET runtime in it, or a folder under the name of a root file.
+    /// .NET runtime in it, a folder under the name of a root file, or a file
+    /// under the name `dotnet` or `BepInEx`.
     pub kept: Vec<String>,
     /// Other people's plugins, patchers and settings. A full removal copies
     /// them to the backup folder first.
@@ -230,10 +231,13 @@ impl Launcher {
                 files::delete_file(&files::inside(root, name)?)?;
             }
         }
-        if shown.folders.iter().any(|folder| folder == paths::DOTNET) {
-            files::delete_tree(&files::inside(root, paths::DOTNET)?)?;
+        // Both folders only when the plan lists them: what has one of the
+        // two names and is not the folder is in `kept`, and is left alone.
+        for folder in [paths::DOTNET, paths::BEPINEX] {
+            if shown.folders.iter().any(|planned| planned == folder) {
+                files::delete_tree(&files::inside(root, folder)?)?;
+            }
         }
-        files::delete_tree(&files::inside(root, paths::BEPINEX)?)?;
 
         let left = inspect::inspect(root, &State::default(), None)?;
         self.update_state(|state| {
@@ -299,6 +303,9 @@ fn plan(root: &Path, state: &State, reference: Option<&manifest::BepInEx>) -> Re
     if bepinex.is_dir() {
         files::scan_tree(&bepinex)?;
         folders.push(paths::BEPINEX.to_owned());
+    } else if std::fs::symlink_metadata(&bepinex).is_ok() {
+        // A file under the name of the folder: not BepInEx, not ours.
+        kept.push(paths::BEPINEX.to_owned());
     }
 
     let mut foreign = Vec::new();

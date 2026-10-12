@@ -589,3 +589,69 @@ async fn a_link_where_the_backups_belong_stops_the_removal_before_anything_is_co
         "nothing was copied through the link"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_file_named_bepinex_is_kept_and_named_and_the_removal_still_completes() {
+    let sandbox = Sandbox::new();
+    let server = TestServer::start().await;
+    server.publish(&Release::new("0.1.0"));
+    let launcher = Launcher::open(sandbox.config(&server)).expect("the launcher opens");
+    // The check brings the checksums the root files are recognised by.
+    launcher.check().await;
+    for name in [
+        "winhttp.dll",
+        "doorstop_config.ini",
+        ".doorstop_version",
+        "changelog.txt",
+        "dotnet/coreclr.dll",
+    ] {
+        put(&sandbox.game, name, support::bepinex_file(name));
+    }
+    std::fs::write(sandbox.game.join("BepInEx"), b"a file, not a folder").expect("a file");
+
+    let plan = launcher.removal_preview().expect("a plan");
+    assert_eq!(plan.kept, ["BepInEx"]);
+    assert_eq!(plan.folders, ["dotnet"]);
+    assert_eq!(plan.root_files.len(), 4);
+
+    // Twice: the first run must not leave a folder the second cannot finish.
+    for _ in 0..2 {
+        let outcome = launcher.remove_all(false).expect("the removal completes");
+        assert_eq!(outcome.kept, ["BepInEx"]);
+        let mut expected = VANILLA.map(str::to_owned).to_vec();
+        expected.insert(0, "BepInEx".to_owned());
+        assert_eq!(listing(&sandbox.game), expected);
+    }
+    assert_eq!(
+        std::fs::read(sandbox.game.join("BepInEx")).expect("kept"),
+        b"a file, not a folder"
+    );
+    launcher.remove_mod().expect("there is no mod to remove");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_folder_named_like_a_root_file_and_a_file_named_dotnet_are_kept_and_named() {
+    let (sandbox, _server, launcher) = installed().await;
+    std::fs::remove_file(sandbox.game.join("winhttp.dll")).expect("remove the proxy");
+    put(&sandbox.game, "winhttp.dll/inside.txt", b"a folder");
+    std::fs::remove_dir_all(sandbox.game.join("dotnet")).expect("remove the runtime");
+    std::fs::write(sandbox.game.join("dotnet"), b"a file").expect("a file");
+
+    let plan = launcher.removal_preview().expect("a plan");
+    assert_eq!(plan.kept, ["winhttp.dll", "dotnet"]);
+    assert_eq!(plan.folders, ["BepInEx"]);
+
+    for _ in 0..2 {
+        let outcome = launcher.remove_all(true).expect("the removal completes");
+        assert_eq!(outcome.kept, ["winhttp.dll", "dotnet"]);
+        assert_eq!(
+            listing(&sandbox.game),
+            [
+                "GameAssembly.dll",
+                "Golf With Your Friends.exe",
+                "dotnet",
+                "winhttp.dll/inside.txt"
+            ]
+        );
+    }
+}
