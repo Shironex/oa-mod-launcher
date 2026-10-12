@@ -696,3 +696,71 @@ async fn a_folder_named_like_a_root_file_and_a_file_named_dotnet_are_kept_and_na
         );
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn steam_turning_busy_after_the_backup_gets_nothing_deleted() {
+    let sandbox = Sandbox::new();
+    let server = TestServer::start().await;
+    server.publish(&Release::new("0.1.0"));
+    // Once armed, Steam starts an update of the game right after the launcher
+    // has looked for the first time: the first question about the game is
+    // asked after that look, and it is what rewrites Steam's file here.
+    let armed = Arc::new(AtomicBool::new(false));
+    let mut config = sandbox.config(&server);
+    let (switch, library) = (Arc::clone(&armed), sandbox.steam.clone());
+    config.running = Arc::new(move |_| {
+        if switch.swap(false, Ordering::SeqCst) {
+            support::write_app_manifest_in_state(&library, support::INSTALL_DIR, 1026);
+        }
+        false
+    });
+    let launcher = Launcher::open(config).expect("the launcher opens");
+    launcher.install(&quiet).await.expect("the install works");
+    other_peoples_things(&sandbox);
+    let before = listing(&sandbox.game);
+
+    armed.store(true, Ordering::SeqCst);
+    let error = launcher.remove_all(true).expect_err("Steam is busy by now");
+
+    assert!(matches!(error, CoreError::SteamBusy), "{error}");
+    assert_eq!(listing(&sandbox.game), before, "nothing was deleted");
+    assert!(
+        sandbox.data.join("backups").is_dir(),
+        "the backup was made before Steam started, and it is only a copy"
+    );
+}
+
+/// The copy of one foreign file fails: Windows refuses to read a file that
+/// another program holds open for itself alone.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_foreign_file_that_cannot_be_copied_gets_nothing_deleted() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let (sandbox, _server, launcher) = installed().await;
+    other_peoples_things(&sandbox);
+    let before = listing(&sandbox.game);
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(sandbox.game.join("BepInEx/plugins/loose.dll"))
+        .expect("the file is held");
+
+    for include_unrecognised in [false, true] {
+        let error = launcher
+            .remove_all(include_unrecognised)
+            .expect_err("the backup cannot be made");
+        assert!(matches!(error, CoreError::Io { .. }), "{error}");
+        assert_eq!(listing(&sandbox.game), before, "nothing was deleted");
+        assert!(sandbox.game.join("winhttp.dll").is_file());
+        assert!(sandbox.saved_state().bepinex.is_some());
+    }
+
+    drop(held);
+    let outcome = launcher.remove_all(false).expect("now it works");
+    assert_eq!(listing(&sandbox.game), VANILLA);
+    let backup = std::path::PathBuf::from(outcome.backup_dir.expect("a backup was made"));
+    assert_eq!(
+        std::fs::read(backup.join("BepInEx/plugins/loose.dll")).expect("copied"),
+        b"MZ loose"
+    );
+}

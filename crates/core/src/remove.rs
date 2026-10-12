@@ -12,8 +12,8 @@
 //!   removal, and what it points at is not touched.
 //! - **Other people's files are copied first.** Plugins, patchers and
 //!   settings that are not the mod's go to `backups/<time>/` in the launcher's
-//!   own folder, and the copy is compared with the original before anything
-//!   is deleted. A link where `backups/` belongs stops the removal.
+//!   own folder, and the copy is compared with the original, checksum by
+//!   checksum, before anything is deleted. A link where `backups/` belongs stops the removal.
 //! - **Vanilla first.** `winhttp.dll` goes first: from that moment the game
 //!   starts without BepInEx, whatever happens to the rest.
 //! - **Again is fine.** A removal that was interrupted is finished by running
@@ -198,7 +198,8 @@ impl Launcher {
     /// As for [`Launcher::remove_mod`], and
     /// [`CoreError::BackupIncomplete`] when the copy of other people's files
     /// does not match the originals. Nothing is deleted in that case, nor
-    /// when a link is found in what would be deleted.
+    /// when a link is found in what would be deleted, nor when the game was
+    /// started or Steam became busy while the backup was made.
     pub fn remove_all(&self, include_unrecognised: bool) -> Result<RemovalOutcome> {
         let lease = self.lease(Activity::Removing)?;
         let removed = self.remove_all_steps(include_unrecognised);
@@ -237,7 +238,11 @@ impl Launcher {
             Some(back_up(&backups, root, &foreign)?)
         };
 
-        self.refuse_while_running(root)?;
+        // Everything is asked again: the backup can take a while, and the
+        // game may have been started or Steam may have begun an update.
+        if self.writable_game()?.root != *root {
+            return Err(CoreError::GameNotFound);
+        }
         // Not the names of the plan but the constants again, in the order of
         // the constants: the plan only says which of them to delete.
         for name in ROOT_FILES_IN_REMOVAL_ORDER {
@@ -412,8 +417,8 @@ fn back_up(backups: &Path, root: &Path, items: &[PathBuf]) -> Result<PathBuf> {
     }
     const COPY: &str = "copy a file to the backup folder";
 
-    // Every file with where it goes and how long it is.
-    let mut copies: Vec<(PathBuf, PathBuf, u64)> = Vec::new();
+    // Every file with where it goes: (the copy, the original).
+    let mut copies: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut folders: Vec<PathBuf> = Vec::new();
     let relative = |path: &Path| {
         path.strip_prefix(root)
@@ -430,14 +435,11 @@ fn back_up(backups: &Path, root: &Path, items: &[PathBuf]) -> Result<PathBuf> {
             for folder in &tree.dirs {
                 folders.push(relative(folder)?);
             }
-            for (file, bytes) in tree.files {
-                copies.push((relative(&file)?, file, bytes));
+            for (file, _) in tree.files {
+                copies.push((relative(&file)?, file));
             }
         } else {
-            let bytes = std::fs::metadata(item)
-                .map_err(CoreError::io(COPY, item))?
-                .len();
-            copies.push((relative(item)?, item.clone(), bytes));
+            copies.push((relative(item)?, item.clone()));
         }
     }
 
@@ -448,7 +450,7 @@ fn back_up(backups: &Path, root: &Path, items: &[PathBuf]) -> Result<PathBuf> {
     for folder in &folders {
         std::fs::create_dir_all(folder).map_err(CoreError::io(COPY, folder))?;
     }
-    for (to, from, _) in &copies {
+    for (to, from) in &copies {
         if let Some(parent) = to.parent() {
             std::fs::create_dir_all(parent).map_err(CoreError::io(COPY, parent))?;
         }
@@ -460,8 +462,9 @@ fn back_up(backups: &Path, root: &Path, items: &[PathBuf]) -> Result<PathBuf> {
 }
 
 /// Compare the backup with what it was made from: the same number of files,
-/// and every file there with the length of its original.
-fn verify_backup(target: &Path, copies: &[(PathBuf, PathBuf, u64)]) -> Result<()> {
+/// and every file there with the SHA-256 of its original, read again from
+/// both places.
+fn verify_backup(target: &Path, copies: &[(PathBuf, PathBuf)]) -> Result<()> {
     let incomplete = || CoreError::BackupIncomplete {
         path: target.to_path_buf(),
     };
@@ -473,9 +476,9 @@ fn verify_backup(target: &Path, copies: &[(PathBuf, PathBuf, u64)]) -> Result<()
     if found != copies.len() {
         return Err(incomplete());
     }
-    for (copy, _, bytes) in copies {
-        let length = std::fs::metadata(copy).map_err(|_| incomplete())?.len();
-        if length != *bytes {
+    for (copy, original) in copies {
+        let copied = files::sha256_file(copy).map_err(|_| incomplete())?;
+        if copied != files::sha256_file(original)? {
             return Err(incomplete());
         }
     }
@@ -590,30 +593,34 @@ mod tests {
     #[test]
     fn a_backup_that_does_not_match_its_original_is_refused() {
         let (_temp, base) = canonical_temp();
-        let backup = base.join("backup");
-        put(&backup, "a.dll", b"1234");
-        put(&backup, "b.dll", b"12");
-        let copy = |name: &str, bytes: u64| (backup.join(name), base.join(name), bytes);
-        let refused = |copies: &[(PathBuf, PathBuf, u64)]| {
+        let (backup, game) = (base.join("backup"), base.join("game"));
+        for name in ["a.dll", "b.dll"] {
+            put(&game, name, name.as_bytes());
+            put(&backup, name, name.as_bytes());
+        }
+        put(&game, "c.dll", b"c.dll");
+        let copy = |name: &str| (backup.join(name), game.join(name));
+        let refused = |copies: &[(PathBuf, PathBuf)]| {
             matches!(
                 verify_backup(&backup, copies),
                 Err(CoreError::BackupIncomplete { .. })
             )
         };
 
-        assert!(verify_backup(&backup, &[copy("a.dll", 4), copy("b.dll", 2)]).is_ok());
+        assert!(verify_backup(&backup, &[copy("a.dll"), copy("b.dll")]).is_ok());
+        assert!(refused(&[copy("a.dll")]), "a file too many");
         assert!(
-            refused(&[copy("a.dll", 4), copy("b.dll", 3)]),
-            "a short file"
-        );
-        assert!(refused(&[copy("a.dll", 4)]), "a file too many");
-        assert!(
-            refused(&[copy("a.dll", 4), copy("b.dll", 2), copy("c.dll", 1)]),
+            refused(&[copy("a.dll"), copy("b.dll"), copy("c.dll")]),
             "a missing file"
         );
+        assert!(refused(&[copy("a.dll"), copy("c.dll")]), "another file");
+
+        put(&backup, "b.dll", b"b.d");
+        assert!(refused(&[copy("a.dll"), copy("b.dll")]), "a short file");
+        put(&backup, "b.dll", b"B.DLL");
         assert!(
-            refused(&[copy("a.dll", 4), copy("c.dll", 2)]),
-            "another file"
+            refused(&[copy("a.dll"), copy("b.dll")]),
+            "the same length with other bytes"
         );
     }
 
