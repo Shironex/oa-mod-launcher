@@ -204,12 +204,18 @@ describe('the status table, row by row', () => {
     expect(kept.canRemove).toBe(true);
   });
 
-  it('7 not installed with an unsupported mod loader: Install is off and removal is the way out', () => {
+  it('7 not installed with an unsupported mod loader: Install stays, and removal is the way out', () => {
     const blocked = view({
       ...EMPTY,
       bepinex: { kind: 'unsupported', reason: 'winhttp.dll is there without BepInEx beside it' },
     });
-    expect(blocked.cta).toEqual({ style: 'off', word: 'Install', sub: 'blocked' });
+    // An interrupted install reads as unsupported too, and the next install clears it.
+    expect(blocked.cta).toEqual({
+      style: 'primary',
+      word: 'Install',
+      sub: 'try anyway',
+      action: { type: 'install' },
+    });
     expect(blocked.detail).toBe('winhttp.dll is there without BepInEx beside it.');
     expect(blocked.notes[0]?.text).toContain('Remove mod');
     expect(blocked.canRemove).toBe(true);

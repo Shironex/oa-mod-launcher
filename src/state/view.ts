@@ -284,19 +284,22 @@ function statusView(input: ViewInput, snapshot: Snapshot): Core {
 
     case 'not_installed':
       if (bepinex.kind === 'unsupported') {
+        // Install stays within reach: what an install that was interrupted
+        // left behind reads as unsupported too, and the next install clears
+        // it before it looks again. Anything else stops it with this reason.
         return {
-          fact: 'cannot install',
+          fact: 'needs a look',
           ball: 0.04,
           flag: false,
-          sentence: 'The mod loader in the game folder cannot be used.',
+          sentence: 'The mod loader in the game folder cannot be used as it is.',
           detail: sentence(bepinex.reason),
-          cta: { style: 'off', word: 'Install', sub: 'blocked' },
+          cta: installCta(snapshot, 'Install', 'try anyway'),
           links: [{ label: 'Play as it is', action: play }],
           pill: { tone: 'warn', text: 'unsupported BepInEx' },
           notes: [
             {
               label: 'Way out',
-              text: 'Remove mod puts the game back to clean. After that, Install works.',
+              text: 'Install first clears what an interrupted install left behind. If it still stops, Remove mod puts the game back to clean, and Install works after that.',
             },
           ],
         };
