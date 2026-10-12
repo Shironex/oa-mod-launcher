@@ -11,6 +11,7 @@ pub mod error;
 pub mod files;
 pub mod game;
 pub mod inspect;
+pub mod launcher;
 pub mod layout;
 pub mod manifest;
 pub mod net;
@@ -21,6 +22,9 @@ pub mod version;
 
 pub use error::{CoreError, Result};
 pub use inspect::BepInEx;
+pub use launcher::{
+    Config, GameInfo, Launcher, Phase, Progress, Remote, Snapshot, Status, UNKNOWN_BUILD, Warning,
+};
 pub use layout::Layout;
 pub use manifest::Manifest;
 pub use state::State;

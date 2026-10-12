@@ -277,11 +277,17 @@ pub(crate) fn write_library_list(root: &Path, libraries: &[(&Path, &[&str])]) {
 /// Write the game's `appmanifest` into `library`, naming `install_dir` as
 /// written (so a test can pass a hostile one).
 pub(crate) fn write_app_manifest(library: &Path, install_dir: &str) {
+    write_app_manifest_in_state(library, install_dir, 4);
+}
+
+/// Like [`write_app_manifest`], with Steam's `StateFlags` as given. 4 is
+/// "fully installed"; 1026 is what an update in progress looks like.
+pub(crate) fn write_app_manifest_in_state(library: &Path, install_dir: &str, state_flags: u32) {
     let steamapps = library.join("steamapps");
     std::fs::create_dir_all(&steamapps).expect("the steamapps folder");
     let text = format!(
-        "\"AppState\"\n{{\n\t\"appid\"\t\t\"{}\"\n\t\"StateFlags\"\t\t\"4\"\n\
-         \t\"installdir\"\t\t\"{install_dir}\"\n\t\"buildid\"\t\t\"20236533\"\n}}\n",
+        "\"AppState\"\n{{\n\t\"appid\"\t\t\"{}\"\n\t\"StateFlags\"\t\t\"{state_flags}\"\n\
+         \t\"installdir\"\t\t\"{install_dir}\"\n\t\"buildid\"\t\t\"{BUILD_ID}\"\n}}\n",
         steam::APP_ID
     );
     std::fs::write(
@@ -301,4 +307,271 @@ pub(crate) fn fake_game_folder(library: &Path) -> PathBuf {
     std::fs::write(dir.join(game::EXE), b"MZ").expect("the game exe");
     std::fs::write(dir.join(game::ASSEMBLY), b"MZ").expect("the game assembly");
     dir
+}
+
+/// The Steam build id every fake app manifest names.
+pub(crate) const BUILD_ID: &str = "20236533";
+
+/// The install folder name every fake app manifest names.
+pub(crate) const INSTALL_DIR: &str = "Golf With Your Friends";
+
+/// Lowercase hex SHA-256 of `bytes`.
+pub(crate) fn sha256(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// A zip holding `entries`, as bytes.
+pub(crate) fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    use std::io::Write;
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    for (name, body) in entries {
+        writer.start_file(*name, options).expect("start an entry");
+        writer.write_all(body).expect("write an entry");
+    }
+    writer.finish().expect("finish the zip").into_inner()
+}
+
+/// A small stand-in for the BepInEx zip: the same top level as the real one
+/// (two folders and four root files), with a few files in each folder.
+pub(crate) const BEPINEX_FILES: [(&str, &[u8]); 9] = [
+    ("BepInEx/core/BepInEx.Unity.IL2CPP.dll", b"MZ il2cpp 788"),
+    ("BepInEx/core/BepInEx.Core.dll", b"MZ core 788"),
+    ("BepInEx/core/0Harmony.dll", b"MZ harmony"),
+    ("dotnet/coreclr.dll", b"MZ coreclr"),
+    ("dotnet/shared/System.Runtime.dll", b"MZ runtime"),
+    ("winhttp.dll", b"MZ proxy"),
+    ("doorstop_config.ini", b"[General]\nenabled = true\n"),
+    (".doorstop_version", b"4.3.0"),
+    ("changelog.txt", b"be.788\n"),
+];
+
+/// The bytes of the file `name` in [`BEPINEX_FILES`].
+pub(crate) fn bepinex_file(name: &str) -> &'static [u8] {
+    BEPINEX_FILES
+        .iter()
+        .find(|file| file.0 == name)
+        .expect("a file of the fake BepInEx")
+        .1
+}
+
+/// Write `body` to `relative` under `root`, with the folders it needs.
+pub(crate) fn put(root: &Path, relative: &str, body: &[u8]) {
+    let path = root.join(relative);
+    std::fs::create_dir_all(path.parent().expect("a parent")).expect("folders");
+    std::fs::write(path, body).expect("a file");
+}
+
+/// Put the fake BepInEx into `game` by hand, as if somebody had unpacked the
+/// zip there before the launcher was ever started.
+pub(crate) fn unpack_bepinex_by_hand(game: &Path) {
+    for (name, body) in BEPINEX_FILES {
+        put(game, name, body);
+    }
+}
+
+/// Every file below `dir`, as paths relative to it with `/` between the
+/// parts, sorted. What a test compares a folder before and after with.
+pub(crate) fn listing(dir: &Path) -> Vec<String> {
+    fn walk(base: &Path, dir: &Path, found: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(base, &path, found);
+            } else {
+                let relative = path.strip_prefix(base).expect("below the base");
+                found.push(relative.to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    let mut found = Vec::new();
+    walk(dir, dir, &mut found);
+    found.sort();
+    found
+}
+
+/// One mod release as a server publishes it.
+pub(crate) struct Release {
+    pub(crate) version: String,
+    pub(crate) mod_bytes: Vec<u8>,
+    pub(crate) zip: Vec<u8>,
+    pub(crate) builds: Vec<String>,
+    pub(crate) launcher_min: String,
+}
+
+impl Release {
+    /// A release of `version` with the fake BepInEx and a mod DLL whose bytes
+    /// name the version.
+    pub(crate) fn new(version: &str) -> Self {
+        Self {
+            version: version.to_owned(),
+            mod_bytes: format!("MZ OaMod {version}").into_bytes(),
+            zip: zip_of(&BEPINEX_FILES),
+            builds: vec![BUILD_ID.to_owned()],
+            launcher_min: "0.1.0".to_owned(),
+        }
+    }
+
+    /// The manifest of this release for files served by `server`. The
+    /// checksums of the files inside the zip are always the ones of the fake
+    /// BepInEx, whatever zip a test put in `zip`.
+    pub(crate) fn manifest(&self, server: &TestServer) -> serde_json::Value {
+        let root_file = |name: &str| sha256(bepinex_file(name));
+        serde_json::json!({
+            "schema": 1,
+            "version": self.version,
+            "published": "2026-10-20T18:00:00Z",
+            "notes": format!("About {}", self.version),
+            "mod": {
+                "url": server.url(&format!("/files/OaMod-{}.dll", self.version)),
+                "size": self.mod_bytes.len(),
+                "sha256": sha256(&self.mod_bytes),
+            },
+            "bepinex": {
+                "label": "6.0.0-be.788",
+                "url": server.url("/files/BepInEx.zip"),
+                "size": self.zip.len(),
+                "sha256": sha256(&self.zip),
+                "probe_sha256": sha256(bepinex_file("BepInEx/core/BepInEx.Unity.IL2CPP.dll")),
+                "root_files": {
+                    "winhttp.dll": root_file("winhttp.dll"),
+                    "doorstop_config.ini": root_file("doorstop_config.ini"),
+                    ".doorstop_version": root_file(".doorstop_version"),
+                    "changelog.txt": root_file("changelog.txt"),
+                },
+            },
+            "game": { "builds": self.builds },
+            "launcher": { "min": self.launcher_min },
+        })
+    }
+}
+
+impl TestServer {
+    /// Publish `release`: its two files, and the manifest with a signature by
+    /// this server's key. Returns the manifest as it was served.
+    pub(crate) fn publish(&self, release: &Release) -> Vec<u8> {
+        self.route(
+            &format!("/files/OaMod-{}.dll", release.version),
+            Reply::Body(release.mod_bytes.clone()),
+        );
+        self.route("/files/BepInEx.zip", Reply::Body(release.zip.clone()));
+        let manifest = serde_json::to_vec_pretty(&release.manifest(self)).expect("JSON");
+        self.route_signed("/manifest.json", &manifest);
+        manifest
+    }
+}
+
+/// Everything one flow test needs on disk, in one temporary folder: the
+/// launcher's data root, a fake Steam with the fake game in it, a switch for
+/// "the game is running" and a record of what the launcher asked to open.
+///
+/// Nothing here is the real game folder or the real Steam, and no test built
+/// on it can reach them: the configuration names the fake Steam folder, so
+/// the launcher never asks the system where Steam is.
+pub(crate) struct Sandbox {
+    _temp: tempfile::TempDir,
+    /// The launcher's data root.
+    pub(crate) data: PathBuf,
+    /// The fake Steam folder, which is also its only library.
+    pub(crate) steam: PathBuf,
+    /// The fake game folder, canonical.
+    pub(crate) game: PathBuf,
+    /// Set it to make the launcher believe the game is running.
+    pub(crate) running: Arc<std::sync::atomic::AtomicBool>,
+    /// The addresses the launcher asked the system to open.
+    pub(crate) opened: Arc<Mutex<Vec<String>>>,
+}
+
+impl Sandbox {
+    pub(crate) fn new() -> Self {
+        let temp = tempfile::tempdir().expect("a temporary directory");
+        let base = std::fs::canonicalize(temp.path()).expect("a real path");
+        let steam = base.join("Steam");
+        let game = std::fs::canonicalize(fake_game_folder(&steam)).expect("the game folder");
+        Self {
+            data: base.join("data"),
+            steam,
+            game,
+            running: Arc::default(),
+            opened: Arc::default(),
+            _temp: temp,
+        }
+    }
+
+    /// A configuration that reads the manifest of `server` and trusts its
+    /// key.
+    pub(crate) fn config(&self, server: &TestServer) -> oa_mod_launcher_core::Config {
+        self.config_for(
+            &server.url("/manifest.json"),
+            &server.url("/files/"),
+            vec![server.public_key()],
+        )
+    }
+
+    /// A configuration whose manifest address answers nothing: port 9 on
+    /// loopback, which no test listens on.
+    pub(crate) fn config_offline(&self) -> oa_mod_launcher_core::Config {
+        self.config_for(
+            "http://127.0.0.1:9/manifest.json",
+            "http://127.0.0.1:9/files/",
+            Vec::new(),
+        )
+    }
+
+    fn config_for(
+        &self,
+        manifest_url: &str,
+        download_prefix: &str,
+        trusted_keys: Vec<String>,
+    ) -> oa_mod_launcher_core::Config {
+        let running = Arc::clone(&self.running);
+        let opened = Arc::clone(&self.opened);
+        oa_mod_launcher_core::Config {
+            layout: oa_mod_launcher_core::Layout::new(&self.data),
+            manifest_url: manifest_url.to_owned(),
+            download_prefix: download_prefix.to_owned(),
+            launcher_version: oa_mod_launcher_core::Version::parse("0.1.0").expect("a version"),
+            trusted_keys,
+            steam_root: Some(self.steam.clone()),
+            running: Arc::new(move |_| running.load(std::sync::atomic::Ordering::SeqCst)),
+            open: Arc::new(move |address| {
+                opened
+                    .lock()
+                    .expect("the opened list")
+                    .push(address.to_owned());
+                Ok(())
+            }),
+        }
+    }
+
+    /// The state file as it is on disk.
+    pub(crate) fn saved_state(&self) -> oa_mod_launcher_core::State {
+        oa_mod_launcher_core::State::load(&self.data.join("state.json")).expect("the state file")
+    }
+}
+
+/// A junction on Windows, a symbolic link elsewhere: `link` leads to the
+/// folder `target`. Neither needs special rights.
+pub(crate) fn link_dir(target: &Path, link: &Path) {
+    #[cfg(windows)]
+    {
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .expect("cmd runs");
+        assert!(status.success(), "the junction is made");
+    }
+    #[cfg(not(windows))]
+    std::os::unix::fs::symlink(target, link).expect("the link is made");
 }
