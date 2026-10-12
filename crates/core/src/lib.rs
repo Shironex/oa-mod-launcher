@@ -10,6 +10,7 @@ pub mod archive;
 pub mod error;
 pub mod files;
 pub mod game;
+pub mod inspect;
 pub mod layout;
 pub mod manifest;
 pub mod net;
@@ -19,6 +20,7 @@ pub mod steam;
 pub mod version;
 
 pub use error::{CoreError, Result};
+pub use inspect::BepInEx;
 pub use layout::Layout;
 pub use manifest::Manifest;
 pub use state::State;
