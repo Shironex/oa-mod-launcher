@@ -1,0 +1,50 @@
+# Weekly, and one pull request per ecosystem: every update of that week is
+# grouped, so a busy week opens three pull requests and not thirty.
+#
+# `cooldown` keeps versions younger than 7 days out, the same rule as
+# `minimumReleaseAge` in pnpm-workspace.yaml.
+#
+# Two pairs have to move together and Dependabot does not know it: the npm
+# package @tauri-apps/api follows the minor of the `tauri` crate, and
+# tauri-plugin-updater is held on its 2.12 line (see Cargo.toml). CI is what
+# catches a pull request that separates them.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      cargo:
+        patterns: ['*']
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      npm:
+        patterns: ['*']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      actions:
+        patterns: ['*']

@@ -1,0 +1,408 @@
+# Releases the launcher: build, sign, verify, publish. docs/development.md
+# ("Releasing") describes it from the owner's side.
+#
+# A pushed tag `v<major>.<minor>.<patch>` starts a release. Three jobs, each
+# with only what it needs:
+#
+#   build    no secrets. Tests, then the installer WITHOUT a signature.
+#   sign     the only job with secrets. It waits for the owner's approval of
+#            the `release` environment, then signs the installer. It runs the
+#            Tauri CLI on one file and nothing else.
+#   publish  no signing secrets, write access to releases. It checks the
+#            signature against the public key in tauri.conf.json, creates a
+#            draft, compares what GitHub stored, and publishes as the last
+#            step.
+#
+# Publishing is the dangerous moment: every installed launcher reads
+# `releases/latest/download/latest.json` of this repository, so a published
+# release reaches all of them at once. Everything that can fail runs before it.
+#
+# A manual run (workflow_dispatch) from a branch is a rehearsal: `build` runs
+# and uploads the unsigned installer as an artifact, `sign` and `publish` are
+# skipped. A manual run from a tag is a release, the same as a pushed tag:
+# that is the way to try again after a failure.
+#
+# Nothing is cached, here or in the actions: a release is built from the tag
+# and the lockfiles only. Actions are pinned to a commit and all of them are
+# GitHub's own.
+#
+# Windows x64 only: one NSIS installer and one platform entry in latest.json.
+#
+# What it needs from the repository settings (docs/development.md, "Before the
+# first release"): the environment `release` with required reviewers and a
+# deployment rule for `v*` tags, and in it the two secrets
+# UPDATER_PRIVATE_KEY and UPDATER_PRIVATE_KEY_PASSWORD. Nothing else.
+
+name: release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One release at a time, and a running one is never cancelled half way.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # Corepack must not stop to ask before it downloads pnpm.
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+
+jobs:
+  build:
+    name: Build the installer
+    runs-on: windows-latest
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The same guard as in ci.yml: a release is never built from a tree
+      # that names the project its first files were modelled on.
+      - name: Name guard
+        run: |
+          first='night'
+          second='maze'
+          pattern="${first}[ _.-]*${second}"
+          if git grep -n -i -E "$pattern" -- . || git ls-files | grep -i -E "$pattern"; then
+            echo "::error::A name that must not appear in this repository was found, see above."
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      # The version has one source, [workspace.package] in Cargo.toml, and
+      # that is the first `version = "..."` line of the file. Everything a
+      # release would fail on later for a reason known now is checked here,
+      # in the first minute and before the owner is asked to approve.
+      - name: Read the version and compare it with the tag
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Could not read the version from Cargo.toml"
+            exit 1
+          fi
+          package="$(node -p "JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).version")"
+          if [ "$package" != "$version" ]; then
+            echo "::error::package.json says $package, Cargo.toml says $version"
+            exit 1
+          fi
+          node scripts/release-notes.mjs --version "$version" > /dev/null
+
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match version $version in Cargo.toml"
+              exit 1
+            fi
+            # This address answers for a published release only, never for a
+            # draft. The publish job asks again, in a stricter way.
+            if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --silent 2> /dev/null; then
+              echo "::error::Release $GITHUB_REF_NAME is already published. A published release is never replaced: raise the version."
+              exit 1
+            fi
+          else
+            echo "::notice::Rehearsal of version $version from $GITHUB_REF_NAME: nothing will be signed or published"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up pnpm
+        run: corepack enable
+
+      - name: Set up Rust
+        run: rustup toolchain install --no-self-update
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the page
+        run: pnpm build
+
+      - name: Page tests
+        run: pnpm test
+
+      - name: Script tests
+        run: pnpm test:scripts
+
+      - name: Rust tests
+        run: cargo test --workspace --locked
+
+      # tauri.conf.json asks for updater artifacts, and with them the build
+      # stops when it has no signing key. This job must not have the key, so
+      # tauri.unsigned.conf.json switches that one setting off for this build
+      # (`--config` merges it over tauri.conf.json). The installer is the same
+      # one; the `sign` job makes the signature the build would have made.
+      - name: Build the installer, unsigned
+        run: |
+          pnpm tauri build --bundles nsis --ci \
+            --config src-tauri/tauri.unsigned.conf.json -- --locked
+
+      # A name without spaces, the one latest.json points at
+      # (installerAssetName in scripts/lib/latest.mjs).
+      - name: Name the installer
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          shopt -s nullglob
+          installers=(target/release/bundle/nsis/*-setup.exe)
+          if [ "${#installers[@]}" -ne 1 ]; then
+            echo "::error::Expected one installer, found ${#installers[@]}"
+            exit 1
+          fi
+          mkdir installer
+          cp "${installers[0]}" "installer/OaModLauncher-$VERSION-windows-x64-setup.exe"
+          (cd installer && sha256sum ./*.exe) | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Kept for a week: the sign job waits for an approval, and the artifact
+      # has to outlive the wait.
+      - name: Upload the installer
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: installer
+          path: installer/
+          if-no-files-found: error
+          retention-days: 7
+          # An installer is compressed already.
+          compression-level: 0
+
+  sign:
+    name: Sign the installer
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    # The updater key and its password live in this environment, as
+    # UPDATER_PRIVATE_KEY and UPDATER_PRIVATE_KEY_PASSWORD. It asks the owner
+    # to approve every run and only accepts `v*` tags.
+    environment: release
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Set up pnpm
+        run: corepack enable
+
+      # No install scripts: no code of a dependency runs in this job before
+      # the one program it is here for, the Tauri CLI.
+      - name: Install
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Download the installer
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: installer
+          path: installer
+
+      # The only step that sees the secrets. The key arrives as the content
+      # of the key file and may end in a line break from the copy into the
+      # secret, which the CLI would not read as base64, so CR and LF are
+      # removed. `--app-version` writes the version into the signature:
+      # installed launchers refuse an installer without it
+      # (`requireSignedVersion`). Nothing here prints the key, and nothing may.
+      - name: Sign
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::The release environment holds no UPDATER_PRIVATE_KEY"
+            exit 1
+          fi
+          TAURI_SIGNING_PRIVATE_KEY="$(printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" | tr -d '\r\n')"
+          export TAURI_SIGNING_PRIVATE_KEY
+          installer="installer/OaModLauncher-$VERSION-windows-x64-setup.exe"
+          pnpm exec tauri signer sign --app-version "$VERSION" "$installer" > /dev/null
+          test -s "$installer.sig"
+
+      - name: Upload the signature
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signature
+          path: installer/*.sig
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Verify and publish
+    needs: [build, sign]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      TAG: v${{ needs.build.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Set up Rust
+        run: rustup toolchain install --no-self-update
+
+      - name: Download the installer
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: installer
+          path: release
+
+      - name: Download the signature
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signature
+          path: release
+
+      # The token that can write releases is given to the steps that call
+      # `gh` and to no other, so the crates compiled here never see it.
+      #
+      # The check an installed launcher will make, made here first: the
+      # signature is by the key in tauri.conf.json, over these exact bytes,
+      # and it carries this version. An installer signed with the wrong key
+      # stops here and reaches nobody.
+      - name: Verify the signature
+        run: |
+          cargo run --locked -p oa-mod-launcher-core --example verify_file -- \
+            "release/OaModLauncher-$VERSION-windows-x64-setup.exe" --version "$VERSION"
+
+      # The notes come from the CHANGELOG.md section of this version: alone
+      # for latest.json, which the launcher shows as plain text, and with the
+      # "How to install" footer for the release page. build-latest.mjs wants
+      # a folder with exactly one installer and its `.sig`, which is what the
+      # two downloads left in release/.
+      - name: Write latest.json and the release notes
+        run: |
+          node scripts/release-notes.mjs --version "$VERSION" > latest-notes.md
+          node scripts/release-notes.mjs --version "$VERSION" \
+            --footer .github/release-footer.md > release-notes.md
+          node scripts/build-latest.mjs \
+            --bundle release \
+            --version "$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --out publish \
+            --notes @latest-notes.md
+          cat publish/latest.json
+
+      # Every release of this tag, drafts included, as lines of `<id> <draft>`.
+      # The list is asked for, because the address of a single tag does not
+      # show drafts. A published release is never touched: the job stops. A
+      # draft can only be what a failed run left behind, and is removed by its
+      # id. The tag stays.
+      - name: Refuse a published release, remove a stale draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          found="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.tag_name == \"$TAG\") | \"\(.id) \(.draft)\"")"
+          while read -r id draft; do
+            [ -n "$id" ] || continue
+            if [ "$draft" != true ]; then
+              echo "::error::Release $TAG is already published. A published release is never replaced: raise the version."
+              exit 1
+            fi
+            echo "Removing the draft $id that an earlier run left behind"
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+          done <<< "$found"
+
+      # A DRAFT first. A draft is never "latest", so no launcher sees it while
+      # its files are still being uploaded and checked.
+      - name: Create the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "OA Mod Launcher $VERSION" \
+            --notes-file release-notes.md \
+            --draft \
+            --verify-tag \
+            "publish/OaModLauncher-$VERSION-windows-x64-setup.exe" \
+            publish/latest.json
+
+      # Exactly the two files, completely uploaded, each with the size it has
+      # here.
+      - name: Compare the draft with the local files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The list of releases can be a few seconds behind a draft that was
+          # just created, and asking in the same second can be told there is
+          # none. So it is asked up to six times.
+          id=""
+          for attempt in 1 2 3 4 5 6; do
+            id="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+              --jq ".[] | select(.tag_name == \"$TAG\" and .draft) | .id")"
+            if [ -n "$id" ]; then break; fi
+            sleep 5
+          done
+          if [ "$(wc -w <<< "$id")" -ne 1 ]; then
+            echo "::error::Expected one draft of $TAG, found: $id"
+            exit 1
+          fi
+          stored="$(gh api "repos/$GITHUB_REPOSITORY/releases/$id" \
+            --jq '.assets[] | select(.state == "uploaded") | "\(.name) \(.size)"' | sort)"
+          expected="$(cd publish && stat -c '%n %s' -- * | sort)"
+          echo "$stored"
+          if [ "$stored" != "$expected" ]; then
+            echo "::error::The draft does not hold what was built. Expected:"
+            echo "$expected"
+            exit 1
+          fi
+
+      # The last step that changes anything. From here every installed
+      # launcher is offered this version.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+      # What the launchers read, read the way they read it. The address can
+      # lag a little behind the publish, so it is asked a few times. If this
+      # fails the release IS published: look at it at once.
+      - name: Check the address the launchers read
+        run: |
+          url="https://github.com/$GITHUB_REPOSITORY/releases/latest/download/latest.json"
+          for attempt in 1 2 3 4 5 6; do
+            if curl -fsSL "$url" -o served.json && cmp -s served.json publish/latest.json; then
+              echo "$url serves the latest.json of $VERSION"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::$url does not serve the latest.json of $VERSION. The release is published: check it now."
+          exit 1
