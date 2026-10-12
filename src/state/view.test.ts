@@ -10,6 +10,8 @@ const SETTLED: Snapshot = {
   status: { kind: 'up_to_date' },
   game: { dir: 'D:\\Games\\Golf With Your Friends', build_id: '20236533', steam_busy: false },
   bepinex: { kind: 'ours', label: '6.0.0-be.788' },
+  bepinex_wanted: '6.0.0-be.788',
+  game_dir_chosen: false,
   mod_installed: '0.2.0',
   foreign_plugins: [],
   remote: { kind: 'up_to_date' },
@@ -181,7 +183,10 @@ describe('the status table, row by row', () => {
       action: { type: 'install' },
     });
     expect(fresh.notes[0]?.text).toBe(
-      'BepInEx and OA Mod 0.2.0. Two downloads, 33.0 MB, about a minute.'
+      'BepInEx 6.0.0-be.788 and OA Mod 0.2.0. Two downloads, 33.0 MB, about a minute.'
+    );
+    expect(view({ ...EMPTY, bepinex_wanted: null }).notes[0]?.text).toContain(
+      'BepInEx and OA Mod 0.2.0.'
     );
     expect(fresh.links[0]).toEqual({ label: 'Play without the mod', action: { type: 'play' } });
     expect(fresh.flag).toBe(false);

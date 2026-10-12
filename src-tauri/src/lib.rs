@@ -126,6 +126,8 @@ mod tests {
             status,
             game: None,
             bepinex: BepInEx::Absent,
+            bepinex_wanted: None,
+            game_dir_chosen: false,
             mod_installed: None,
             foreign_plugins: Vec::new(),
             remote: Remote::Unknown,

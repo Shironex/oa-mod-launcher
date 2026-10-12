@@ -261,6 +261,17 @@ export type Snapshot = {
 	game: GameInfo | null,
 	/**  What kind of BepInEx the game folder holds. */
 	bepinex: BepInEx,
+	/**
+	 *  The display text of the BepInEx build the newest known release names:
+	 *  the one an install would bring. `None` before any manifest was read.
+	 */
+	bepinex_wanted: string | null,
+	/**
+	 *  Whether the player chose a game folder by hand, so there is something
+	 *  for "reset to Steam" to forget. True even when that folder is no
+	 *  longer a game folder and the one Steam names is used.
+	 */
+	game_dir_chosen: boolean,
 	/**  The installed mod: its version, or [`UNKNOWN_BUILD`]. */
 	mod_installed: string | null,
 	/**  The names in `BepInEx/plugins` that are not the mod. */

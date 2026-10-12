@@ -52,6 +52,8 @@ const READY: Snapshot = {
   status: { kind: 'up_to_date' },
   game: { dir: GAME_DIR, build_id: '20236533', steam_busy: false },
   bepinex: { kind: 'ours', label: LABEL },
+  bepinex_wanted: LABEL,
+  game_dir_chosen: false,
   mod_installed: NEWEST,
   foreign_plugins: [],
   remote: { kind: 'up_to_date' },
@@ -278,6 +280,16 @@ const PREVIEWS: Record<string, Preview> = {
 
   // The dialogs.
   settings: { ...QUIET, snapshot: READY, dialog: 'settings', plan: PLAN_OURS },
+  'settings-chosen': {
+    ...QUIET,
+    snapshot: {
+      ...READY,
+      game: { dir: 'D:\\Games\\Golf With Your Friends', build_id: null, steam_busy: false },
+      game_dir_chosen: true,
+    },
+    dialog: 'settings',
+    plan: PLAN_OURS,
+  },
   about: { ...QUIET, snapshot: READY, dialog: 'about' },
   remove: { ...QUIET, snapshot: READY, dialog: 'remove', plan: PLAN_OURS },
   'remove-foreign': {

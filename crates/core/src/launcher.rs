@@ -334,6 +334,13 @@ pub struct Snapshot {
     pub game: Option<GameInfo>,
     /// What kind of BepInEx the game folder holds.
     pub bepinex: BepInEx,
+    /// The display text of the BepInEx build the newest known release names:
+    /// the one an install would bring. `None` before any manifest was read.
+    pub bepinex_wanted: Option<String>,
+    /// Whether the player chose a game folder by hand, so there is something
+    /// for "reset to Steam" to forget. True even when that folder is no
+    /// longer a game folder and the one Steam names is used.
+    pub game_dir_chosen: bool,
     /// The installed mod: its version, or [`UNKNOWN_BUILD`].
     pub mod_installed: Option<String>,
     /// The names in `BepInEx/plugins` that are not the mod.
@@ -514,6 +521,10 @@ impl Launcher {
             bepinex: facts
                 .as_ref()
                 .map_or(BepInEx::Absent, |facts| facts.bepinex.clone()),
+            bepinex_wanted: manifest
+                .as_ref()
+                .map(|manifest| manifest.bepinex.label.clone()),
+            game_dir_chosen: state.game_dir_override.is_some(),
             mod_installed,
             foreign_plugins: facts.map(|facts| facts.foreign_plugins).unwrap_or_default(),
             remote,

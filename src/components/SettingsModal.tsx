@@ -84,15 +84,18 @@ export function SettingsModal({ section, snapshot, locked, canRemove, error }: S
                   <Icon name="folder" />
                   Change
                 </button>
-                <button
-                  type="button"
-                  className="sbtn"
-                  disabled={locked !== null}
-                  title="Forget a folder chosen by hand and use the one Steam names"
-                  onClick={() => void resetGameFolder()}
-                >
-                  Reset to Steam
-                </button>
+                {/* Only when a folder was chosen by hand: otherwise there is nothing to forget. */}
+                {snapshot?.game_dir_chosen && (
+                  <button
+                    type="button"
+                    className="sbtn"
+                    disabled={locked !== null}
+                    title="Forget the folder chosen by hand and use the one Steam names"
+                    onClick={() => void resetGameFolder()}
+                  >
+                    Reset to Steam
+                  </button>
+                )}
               </span>
             </div>
             <div className="m-row">

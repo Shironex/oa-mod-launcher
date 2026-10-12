@@ -313,7 +313,9 @@ function statusView(input: ViewInput, snapshot: Snapshot): Core {
           notes: [
             {
               label: 'Gets',
-              text: `BepInEx and ${newest ? modText(newest) : 'OA Mod'}. Two downloads${
+              text: `${
+                snapshot.bepinex_wanted ? `BepInEx ${snapshot.bepinex_wanted}` : 'BepInEx'
+              } and ${newest ? modText(newest) : 'OA Mod'}. Two downloads${
                 remote.kind === 'update_available' ? `, ${megabytes(remote.size ?? 0)}` : ''
               }, about a minute.`,
               calm: true,

@@ -159,6 +159,8 @@ it('after a full removal, the kept root files the launcher did not recognise are
     status: { kind: 'not_installed' as const },
     game: null,
     bepinex: { kind: 'absent' as const },
+    bepinex_wanted: null,
+    game_dir_chosen: false,
     mod_installed: null,
     foreign_plugins: [],
     remote: { kind: 'unknown' as const },
