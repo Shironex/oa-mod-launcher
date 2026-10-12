@@ -79,6 +79,12 @@ pub mod paths {
 /// The file is opened without `create` and without `truncate`, and closed at
 /// once, so the check changes nothing. On other systems the answer is always
 /// `false`: the game does not run there.
+///
+/// Asking for write access is the only open that tells: Windows holds a
+/// running executable as a mapped image, not through a file handle, so an
+/// open for reading that shares nothing is granted while the program runs
+/// (tried on a copy of a small program, running and not). Only the request
+/// to write is refused.
 pub fn is_running(root: &Path) -> bool {
     const ERROR_SHARING_VIOLATION: i32 = 32;
     match std::fs::OpenOptions::new().write(true).open(root.join(EXE)) {
