@@ -26,6 +26,9 @@ export function isVersion(text) {
   return /^\d+\.\d+\.\d+$/.test(text);
 }
 
+/** `http://127.0.0.1:8123/...` or `http://localhost/...`. */
+const LOOPBACK = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//;
+
 function isHash(text) {
   return typeof text === 'string' && /^[0-9a-f]{64}$/.test(text);
 }
@@ -79,7 +82,9 @@ export function bepinexBlock(input) {
   ) {
     throw new Error('bepinex.json: "label" must be one short line');
   }
-  if (typeof url !== 'string' || !url.startsWith('https://')) {
+  // Plain http on this computer only, for a local test feed (scripts/serve.mjs).
+  // The launcher has the same rule, and a release build refuses it anyway.
+  if (typeof url !== 'string' || !(url.startsWith('https://') || LOOPBACK.test(url))) {
     throw new Error('bepinex.json: "url" must be the https address of the mirrored zip');
   }
   if (!Number.isSafeInteger(size) || size <= 0) {

@@ -127,6 +127,7 @@ test('a bepinex.json with a missing or malformed field is refused', () => {
     ['label', ''],
     ['label', 'two\nlines'],
     ['url', 'http://example.com/BepInEx.zip'],
+    ['url', 'http://127.0.0.1.example.com/BepInEx.zip'],
     ['url', undefined],
     ['size', 0],
     ['size', '34336405'],
@@ -144,6 +145,12 @@ test('a bepinex.json with a missing or malformed field is refused', () => {
     );
   }
   assert.throws(() => bepinexBlock(undefined), /label/);
+});
+
+test('a zip on this computer may be named over plain http, for a local test feed', () => {
+  for (const url of ['http://127.0.0.1:8123/BepInEx.zip', 'http://localhost/BepInEx.zip']) {
+    assert.equal(bepinexBlock({ ...BEPINEX, url }).url, url);
+  }
 });
 
 test('game builds are split on commas and white space, a stray CR included', () => {

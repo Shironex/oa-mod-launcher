@@ -16,6 +16,7 @@
     "test:scripts": "node --test \"scripts/**/*.test.mjs\"",
     "tauri": "tauri",
     "bindings": "cargo test -p oa-mod-launcher the_committed_bindings_match_the_commands",
+    "serve": "node scripts/serve.mjs",
     "notices": "node scripts/build-launcher-notices.mjs"
   },
   "dependencies": {
