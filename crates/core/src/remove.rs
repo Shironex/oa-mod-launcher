@@ -40,6 +40,11 @@ const ROOT_FILES_IN_REMOVAL_ORDER: [&str; 4] = [
     "changelog.txt",
 ];
 
+/// The root files that only mean something next to the proxy DLL. They are
+/// deleted with it or kept with it: a `winhttp.dll` the launcher does not
+/// recognise would be left without the config it reads.
+const LOADER_FILES: [&str; 2] = [paths::DOORSTOP_CONFIG, ".doorstop_version"];
+
 /// What "remove only OA Mod" deletes, in order. The folder is removed after
 /// them when it is empty.
 const MOD_FILES: [&str; 4] = [
@@ -89,9 +94,15 @@ pub struct RemovalPlan {
     /// The root files a full removal would delete: the ones whose content
     /// the launcher recognises.
     pub root_files: Vec<String>,
-    /// Root files of BepInEx whose content the launcher does not recognise.
-    /// A full removal keeps them unless it is told to include them.
+    /// Root files of BepInEx a full removal keeps unless it is told to
+    /// include them: the ones whose content the launcher does not recognise,
+    /// and the ones in [`RemovalPlan::kept_with_proxy`].
     pub unrecognised_root_files: Vec<String>,
+    /// The part of [`RemovalPlan::unrecognised_root_files`] the launcher does
+    /// recognise and keeps all the same, because `winhttp.dll` is one it does
+    /// not recognise: `doorstop_config.ini` and `.doorstop_version` stay or
+    /// go with the proxy DLL that reads them.
+    pub kept_with_proxy: Vec<String>,
     /// What a full removal never deletes although it has a name of BepInEx,
     /// because it is not what the name says: a `dotnet` folder without the
     /// .NET runtime in it, a folder under the name of a root file, or a file
@@ -110,9 +121,10 @@ pub struct RemovalPlan {
 pub struct RemovalOutcome {
     /// What the window should show now.
     pub snapshot: Snapshot,
-    /// What was left in the game folder on purpose, relative to it: the
-    /// unrecognised root files that were not included, and everything in
-    /// [`RemovalPlan::kept`].
+    /// What was left in the game folder on purpose, relative to it:
+    /// [`RemovalPlan::unrecognised_root_files`] when they were not included
+    /// (the loader files kept with an unrecognised `winhttp.dll` among them),
+    /// and everything in [`RemovalPlan::kept`].
     pub kept: Vec<String>,
     /// Where other people's files were copied to, when there were any.
     pub backup_dir: Option<String>,
@@ -177,7 +189,9 @@ impl Launcher {
     /// the backup folder first.
     ///
     /// Root files whose content the launcher does not recognise are kept
-    /// unless `include_unrecognised` is set; the outcome names what was kept.
+    /// unless `include_unrecognised` is set, and with an unrecognised
+    /// `winhttp.dll` its config and version file are kept too; the outcome
+    /// names what was kept.
     ///
     /// # Errors
     ///
@@ -264,6 +278,7 @@ fn plan(root: &Path, state: &State, reference: Option<&manifest::BepInEx>) -> Re
 
     let mut root_files = Vec::new();
     let mut unrecognised_root_files = Vec::new();
+    let mut kept_with_proxy = Vec::new();
     let mut kept = Vec::new();
     for name in ROOT_FILES_IN_REMOVAL_ORDER {
         let path = files::inside(root, name)?;
@@ -280,10 +295,18 @@ fn plan(root: &Path, state: &State, reference: Option<&manifest::BepInEx>) -> Re
             .as_ref()
             .and_then(|record| record.root_files.get(name));
         let named = reference.and_then(|reference| reference.root_files.get(name));
-        if recorded == Some(&on_disk) || named == Some(&on_disk) {
-            root_files.push(name.to_owned());
-        } else {
+        // The proxy DLL is the first name of the list, so by the time its
+        // loader files are judged it is known whether it stays.
+        let proxy_stays = unrecognised_root_files
+            .iter()
+            .any(|kept| kept == paths::WINHTTP);
+        if recorded != Some(&on_disk) && named != Some(&on_disk) {
             unrecognised_root_files.push(name.to_owned());
+        } else if proxy_stays && LOADER_FILES.contains(&name) {
+            unrecognised_root_files.push(name.to_owned());
+            kept_with_proxy.push(name.to_owned());
+        } else {
+            root_files.push(name.to_owned());
         }
     }
 
@@ -361,6 +384,7 @@ fn plan(root: &Path, state: &State, reference: Option<&manifest::BepInEx>) -> Re
             folders,
             root_files,
             unrecognised_root_files,
+            kept_with_proxy,
             kept,
             foreign: foreign_shown,
             mod_only_recommended,
@@ -519,6 +543,9 @@ mod tests {
     #[test]
     fn the_proxy_dll_is_deleted_first_and_every_root_file_is_on_the_list() {
         assert_eq!(ROOT_FILES_IN_REMOVAL_ORDER[0], paths::WINHTTP);
+        for name in LOADER_FILES {
+            assert!(ROOT_FILES_IN_REMOVAL_ORDER[1..].contains(&name));
+        }
         let mut ours = ROOT_FILES_IN_REMOVAL_ORDER.to_vec();
         let mut theirs = manifest::ROOT_FILES.to_vec();
         ours.sort_unstable();

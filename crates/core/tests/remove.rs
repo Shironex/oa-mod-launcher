@@ -231,33 +231,74 @@ async fn an_adopted_bepinex_makes_mod_only_the_default() {
 #[tokio::test(flavor = "multi_thread")]
 async fn root_files_the_launcher_does_not_recognise_are_kept_unless_asked() {
     let (sandbox, _server, launcher) = installed().await;
-    put(
-        &sandbox.game,
-        "winhttp.dll",
-        b"MZ a proxy of something else",
-    );
     put(&sandbox.game, "changelog.txt", b"edited by hand");
 
     let plan = launcher.removal_preview().expect("a plan");
     assert_eq!(
         plan.root_files,
-        ["doorstop_config.ini", ".doorstop_version"]
+        ["winhttp.dll", "doorstop_config.ini", ".doorstop_version"]
     );
+    assert_eq!(plan.unrecognised_root_files, ["changelog.txt"]);
+    assert!(plan.kept_with_proxy.is_empty());
+
+    let outcome = launcher.remove_all(false).expect("the rest is removed");
+
+    assert_eq!(outcome.kept, ["changelog.txt"]);
+    let mut expected = VANILLA.map(str::to_owned).to_vec();
+    expected.push("changelog.txt".to_owned());
+    expected.sort();
+    assert_eq!(listing(&sandbox.game), expected);
     assert_eq!(
-        plan.unrecognised_root_files,
-        ["winhttp.dll", "changelog.txt"]
+        std::fs::read(sandbox.game.join("changelog.txt")).expect("kept"),
+        b"edited by hand"
+    );
+
+    let outcome = launcher.remove_all(true).expect("now it goes too");
+    assert!(outcome.kept.is_empty());
+    assert_eq!(listing(&sandbox.game), VANILLA);
+    assert_eq!(outcome.snapshot.status, Status::Clean);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_proxy_dll_that_is_not_recognised_keeps_its_loader_files_with_it() {
+    let (sandbox, _server, launcher) = installed().await;
+    put(
+        &sandbox.game,
+        "winhttp.dll",
+        b"MZ a proxy of something else",
+    );
+    let loader_files = ["winhttp.dll", "doorstop_config.ini", ".doorstop_version"];
+
+    // The config and the version file are the release's own, and still they
+    // stay: a proxy DLL without its config is a game that may not start.
+    let plan = launcher.removal_preview().expect("a plan");
+    assert_eq!(plan.root_files, ["changelog.txt"]);
+    assert_eq!(plan.unrecognised_root_files, loader_files);
+    assert_eq!(
+        plan.kept_with_proxy,
+        ["doorstop_config.ini", ".doorstop_version"]
     );
 
     let outcome = launcher.remove_all(false).expect("the rest is removed");
 
-    assert_eq!(outcome.kept, ["winhttp.dll", "changelog.txt"]);
-    let mut expected = VANILLA.map(str::to_owned).to_vec();
-    expected.extend(["changelog.txt".to_owned(), "winhttp.dll".to_owned()]);
-    expected.sort();
-    assert_eq!(listing(&sandbox.game), expected);
+    assert_eq!(outcome.kept, loader_files);
+    assert_eq!(
+        listing(&sandbox.game),
+        [
+            ".doorstop_version",
+            "GameAssembly.dll",
+            "Golf With Your Friends.exe",
+            "doorstop_config.ini",
+            "winhttp.dll"
+        ]
+    );
     assert_eq!(
         std::fs::read(sandbox.game.join("winhttp.dll")).expect("kept"),
         b"MZ a proxy of something else"
+    );
+    assert_eq!(
+        std::fs::read(sandbox.game.join("doorstop_config.ini")).expect("kept"),
+        support::bepinex_file("doorstop_config.ini")
     );
     // Something is still there, so this is not the clean state.
     assert!(matches!(
