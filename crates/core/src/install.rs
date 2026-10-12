@@ -1,22 +1,26 @@
 //! Installing and updating: BepInEx when the game has none, then the mod.
 //!
-//! Every download goes to the launcher's own `staging/` folder first and is
+//! Every download goes to the launcher's own `staging/` folder first (emptied
+//! before, and refused when a link stands in for it or is in it) and is
 //! compared with the size and the SHA-256 the signed manifest names. Only
 //! then is anything written into the game folder, in an order that leaves the
 //! game either as it was or working:
 //!
 //! 1. Nothing of BepInEx is written when any of its files is already there.
-//! 2. `dotnet/` and `BepInEx/` are copied first, the small root files next and
-//!    `winhttp.dll` last. That file is what makes the game load BepInEx, so a
-//!    copy that stops half way never loads.
-//! 3. When a copy fails, exactly the files and folders it made are removed
-//!    again, in reverse.
-//! 4. The mod is written next to its final name and renamed over it.
+//! 2. BepInEx is copied into a staging folder inside the game folder, not to
+//!    its final names. A copy that stops half way stops in there.
+//! 3. From there each piece is renamed into place: `dotnet/`, `BepInEx/core`,
+//!    the small root files and `winhttp.dll` last. That file is what makes
+//!    the game load BepInEx, so an install that stops half way never loads.
+//! 4. When a step fails, what was moved is taken out again. When the launcher
+//!    itself dies, the next start does the same, before anything else is
+//!    done with the game folder: see [`clear_interrupted`].
+//! 5. The mod is written next to its final name and renamed over it.
 //!
 //! An update is the same flow: with BepInEx in place, only the mod is
 //! replaced.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::archive;
 use crate::error::{CoreError, Result};
@@ -68,9 +72,9 @@ impl Launcher {
             Ok(manifest) => self.install_steps(&manifest, &report).await,
             Err(error) => Err(error),
         };
-        clean_staging(self.layout());
+        let _ = clean_staging(self.layout());
         drop(lease);
-        result?;
+        result.map_err(|error| self.explained(error))?;
         Ok(self.snapshot())
     }
 
@@ -79,8 +83,9 @@ impl Launcher {
         let state = self.state()?;
         let facts = inspect::inspect(&game.root, &state, Some(&manifest.bepinex))?;
 
-        let staging = self.layout().staging_dir();
-        clean_staging(self.layout());
+        // A staging folder that is a link, or has one in it, stops the
+        // install here, before anything is downloaded into it.
+        let staging = clean_staging(self.layout())?;
         std::fs::create_dir_all(&staging)
             .map_err(CoreError::io("create the staging folder", &staging))?;
 
@@ -212,8 +217,9 @@ fn record(owner: Owner, bepinex: &manifest::BepInEx, probe_sha256: &str) -> BepI
 }
 
 /// Check that the unpacked zip is the BepInEx build the manifest describes:
-/// nothing at its top level but the two folders and the four root files, and
-/// the probe and the root files with the checksums of the manifest.
+/// nothing at its top level but the two folders and the four root files, no
+/// file in `BepInEx/` outside `BepInEx/core`, and the probe and the root
+/// files with the checksums of the manifest.
 fn check_unpacked(unpacked: &Path, expected: &manifest::BepInEx) -> Result<()> {
     let refused = |reason: String| CoreError::Archive(reason);
 
@@ -237,6 +243,19 @@ fn check_unpacked(unpacked: &Path, expected: &manifest::BepInEx) -> Result<()> {
             return Err(refused(format!("it has no {folder} folder")));
         }
     }
+    // Only `BepInEx/core` is moved into the game folder, so a file anywhere
+    // else in `BepInEx/` would be dropped without a word. The build the
+    // release names has none.
+    let core = unpacked.join(paths::CORE);
+    for (file, _) in files::scan_tree(&unpacked.join(paths::BEPINEX))?.files {
+        if !file.starts_with(&core) {
+            let name = file.strip_prefix(unpacked).unwrap_or(&file);
+            return Err(refused(format!(
+                "it holds \"{}\", and BepInEx/core is the only folder of BepInEx it may bring",
+                name.display()
+            )));
+        }
+    }
 
     let wanted = ROOT_FILES
         .iter()
@@ -256,85 +275,162 @@ fn check_unpacked(unpacked: &Path, expected: &manifest::BepInEx) -> Result<()> {
     Ok(())
 }
 
-/// Copy the unpacked BepInEx into the game folder `root`.
+/// What is renamed out of the staging folder into the game folder, in that
+/// order: the two folders, then the root files with `winhttp.dll` last.
+fn pieces() -> impl DoubleEndedIterator<Item = &'static str> {
+    [paths::DOTNET, paths::CORE].into_iter().chain(ROOT_FILES)
+}
+
+/// Put the unpacked BepInEx into the game folder `root`.
+///
+/// Nothing is copied to its final name. Everything is first copied into
+/// [`paths::INSTALL_PART`] inside the game folder, which is then renamed to
+/// [`paths::INSTALL_READY`], and from there each piece is renamed into place:
+/// `dotnet`, `BepInEx/core`, the small root files and `winhttp.dll` last. A
+/// rename is all or nothing, so no folder of BepInEx is ever half there under
+/// its own name, and what a launcher that died left behind is told from the
+/// two staging names alone, see [`clear_interrupted`].
 ///
 /// `still_allowed` is asked once more after every target was checked and
-/// before the first byte is written.
+/// before the first byte is written, and again before every later step: the
+/// rest of `dotnet` after its proof file, each further copy, and each move.
+/// When it refuses or a step fails, what this call did is undone.
 fn place(unpacked: &Path, root: &Path, still_allowed: &dyn Fn() -> Result<()>) -> Result<()> {
-    // What to copy, in the order it is written: the two folders, then the
-    // root files with `winhttp.dll` last.
-    let mut relatives: Vec<PathBuf> = Vec::new();
-    for folder in [paths::DOTNET, paths::BEPINEX] {
-        for (file, _) in files::scan_tree(&unpacked.join(folder))?.files {
-            let relative = file
-                .strip_prefix(unpacked)
-                .map_err(|_| CoreError::Archive("an unpacked file is out of place".to_owned()))?;
-            relatives.push(relative.to_path_buf());
-        }
-    }
-    relatives.extend(ROOT_FILES.iter().map(PathBuf::from));
-
+    // The leftovers of a run that died, before the targets are looked at.
+    clear_interrupted(root)?;
     // Every target is proven to be inside the game folder and free before
-    // anything is written. A folder may exist; a file may not.
-    let mut targets = Vec::with_capacity(relatives.len());
-    for relative in &relatives {
-        let target = files::inside(root, relative)?;
+    // anything is written.
+    for piece in pieces() {
+        let target = files::inside(root, piece)?;
         if std::fs::symlink_metadata(&target).is_ok() {
             return Err(CoreError::Conflict { path: target });
         }
-        targets.push((unpacked.join(relative), target));
     }
     still_allowed()?;
 
-    let mut written: Vec<&Path> = Vec::new();
-    let mut made: Vec<PathBuf> = Vec::new();
-    let copied = targets.iter().try_for_each(|(source, target)| {
-        make_parents(root, target, &mut made)?;
+    let placed = stage(unpacked, root, still_allowed).and_then(|()| move_in(root, still_allowed));
+    if placed.is_err() {
+        // Best effort: what cannot be undone now is undone by the next
+        // start, from the same two names.
+        let _ = clear_interrupted(root);
+    }
+    placed
+}
+
+/// Copy the unpacked BepInEx into [`paths::INSTALL_PART`] in the game folder
+/// and rename that to [`paths::INSTALL_READY`] once all of it is there.
+fn stage(unpacked: &Path, root: &Path, still_allowed: &dyn Fn() -> Result<()>) -> Result<()> {
+    const WRITE: &str = "write into the game folder";
+    let part = files::inside(root, paths::INSTALL_PART)?;
+    std::fs::create_dir(&part).map_err(files::write_error(WRITE, &part))?;
+
+    let copy = |relative: &Path| -> Result<()> {
+        let (source, target) = (unpacked.join(relative), part.join(relative));
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(files::write_error(WRITE, parent))?;
+        }
         let mut to = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(target)
-            .map_err(files::write_error("write into the game folder", target))?;
-        // On the list from the moment it exists, so a copy that stops half
-        // way is removed too.
-        written.push(target);
-        let mut from = std::fs::File::open(source)
-            .map_err(CoreError::io("read the unpacked archive", source))?;
-        std::io::copy(&mut from, &mut to)
-            .map_err(files::write_error("write into the game folder", target))?;
-        to.sync_all()
-            .map_err(files::write_error("write into the game folder", target))
-    });
+            .open(&target)
+            .map_err(files::write_error(WRITE, &target))?;
+        let mut from = std::fs::File::open(&source)
+            .map_err(CoreError::io("read the unpacked archive", &source))?;
+        std::io::copy(&mut from, &mut to).map_err(files::write_error(WRITE, &target))?;
+        to.sync_all().map_err(files::write_error(WRITE, &target))
+    };
+    let out_of_place = |_| CoreError::Archive("an unpacked file is out of place".to_owned());
 
-    if copied.is_err() {
-        // Exactly what this call made, newest first. Best effort: what
-        // cannot be removed now is found by the next look at the folder.
-        for file in written.iter().rev() {
-            let _ = std::fs::remove_file(file);
-        }
-        for folder in made.iter().rev() {
-            let _ = std::fs::remove_dir(folder);
+    // The file that proves `dotnet/` is the runtime goes first, so there is
+    // no moment at which the folder holds files of the runtime without it.
+    let proof = Path::new(paths::DOTNET_PROOF);
+    if unpacked.join(proof).is_file() {
+        copy(proof)?;
+    }
+    for folder in [paths::DOTNET, paths::CORE] {
+        still_allowed()?;
+        let tree = files::scan_tree(&unpacked.join(folder))?;
+        for (file, _) in &tree.files {
+            let relative = file.strip_prefix(unpacked).map_err(out_of_place)?;
+            if relative != proof {
+                copy(relative)?;
+            }
         }
     }
-    copied
+    still_allowed()?;
+    for name in ROOT_FILES {
+        copy(Path::new(name))?;
+    }
+
+    still_allowed()?;
+    let ready = files::inside(root, paths::INSTALL_READY)?;
+    files::rename_with_retries(&part, &ready, WRITE)
 }
 
-/// Create the folders `target` needs below `root`, one level at a time, and
-/// note each one that was made.
-fn make_parents(root: &Path, target: &Path, made: &mut Vec<PathBuf>) -> Result<()> {
-    let mut missing: Vec<&Path> = target
-        .ancestors()
-        .skip(1)
-        .take_while(|folder| *folder != root && !folder.is_dir())
-        .collect();
-    missing.reverse();
-    for folder in missing {
-        std::fs::create_dir(folder).map_err(files::write_error(
-            "create a folder in the game folder",
-            folder,
-        ))?;
-        made.push(folder.to_path_buf());
+/// Rename every piece out of [`paths::INSTALL_READY`] into the game folder,
+/// `winhttp.dll` last, and remove the folder they came from.
+fn move_in(root: &Path, still_allowed: &dyn Fn() -> Result<()>) -> Result<()> {
+    const MOVE: &str = "put BepInEx into place";
+    let ready = files::inside(root, paths::INSTALL_READY)?;
+    let bepinex = files::inside(root, paths::BEPINEX)?;
+    if !bepinex.is_dir() {
+        std::fs::create_dir(&bepinex).map_err(files::write_error(MOVE, &bepinex))?;
     }
+    for piece in pieces() {
+        still_allowed()?;
+        let target = files::inside(root, piece)?;
+        // A rename replaces a file that is in its way. Nothing was there a
+        // moment ago, and nothing may be replaced now.
+        if std::fs::symlink_metadata(&target).is_ok() {
+            return Err(CoreError::Conflict { path: target });
+        }
+        files::rename_with_retries(&ready.join(piece), &target, MOVE)?;
+    }
+    // Empty by now. A leftover of it is removed by the next start.
+    let _ = files::delete_tree(&ready);
+    Ok(())
+}
+
+/// Undo an install of BepInEx that did not finish: what a launcher that was
+/// killed, or a step that failed, left in the game folder `root`.
+///
+/// It is told from the two staging names alone:
+///
+/// - [`paths::INSTALL_PART`] is a copy that stopped half way. Nothing was
+///   moved out of it, so deleting it is all there is to do.
+/// - [`paths::INSTALL_READY`] that still holds `winhttp.dll` is an install
+///   that stopped while its pieces were moved. Each piece that is no longer
+///   in it was moved into the game folder by the launcher, into a place that
+///   was empty, so it is deleted there. Then the folder goes.
+/// - [`paths::INSTALL_READY`] without `winhttp.dll` is an install whose last
+///   move was made. Only the empty folder is removed.
+///
+/// Only the constant names are ever deleted, through the safe deletes: a link
+/// under one of them refuses the whole step. Running it again is fine.
+pub(crate) fn clear_interrupted(root: &Path) -> Result<()> {
+    let ready = files::inside(root, paths::INSTALL_READY)?;
+    let waiting = |piece: &str| std::fs::symlink_metadata(ready.join(piece)).is_ok();
+    if ready.is_dir() && waiting(paths::WINHTTP) {
+        // Newest first, as a failed copy was always taken back.
+        for piece in pieces().rev().filter(|piece| !waiting(piece)) {
+            let moved = files::inside(root, piece)?;
+            if [paths::DOTNET, paths::CORE].contains(&piece) {
+                files::delete_tree(&moved)?;
+            } else {
+                files::delete_file(&moved)?;
+            }
+        }
+        // The folder of BepInEx, when the install made it: `remove_dir`
+        // removes it only when nothing else is in it.
+        let _ = std::fs::remove_dir(files::inside(root, paths::BEPINEX)?);
+        // Everything that was moved is out again. The staged proxy DLL goes
+        // first, so that a delete of the staging folder that stops half way
+        // is not read as "moved" by the next run: without it the folder only
+        // says "nothing left to undo".
+        files::delete_file(&ready.join(paths::WINHTTP))?;
+    }
+    files::delete_tree(&ready)?;
+    files::delete_tree(&files::inside(root, paths::INSTALL_PART)?)?;
     Ok(())
 }
 
@@ -358,6 +454,8 @@ fn write_mod(root: &Path, staged: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
 
     fn canonical_temp() -> (tempfile::TempDir, PathBuf) {
@@ -441,6 +539,157 @@ mod tests {
         // pinned here: the root files come after both folders, winhttp.dll
         // after everything.
         assert_eq!(ROOT_FILES.last(), Some(&paths::WINHTTP));
+        assert_eq!(pieces().last(), Some(paths::WINHTTP));
+        assert_eq!(
+            pieces().take(2).collect::<Vec<_>>(),
+            [paths::DOTNET, paths::CORE]
+        );
+    }
+
+    #[test]
+    fn a_placement_puts_everything_into_place_and_leaves_no_staging_folder() {
+        let (_temp, base) = canonical_temp();
+        let unpacked = unpacked_in(&base);
+        let game = base.join("game");
+        put(&game, "BepInEx/config/theirs.cfg", b"keep");
+        // What a launcher that died in an earlier copy left behind.
+        put(&game, "oamod-install.part/dotnet/half.dll", b"half");
+
+        place(&unpacked, &game, &allowed).expect("BepInEx is placed");
+
+        for relative in [
+            "dotnet/coreclr.dll",
+            "dotnet/shared/deep/System.dll",
+            "BepInEx/core/BepInEx.Unity.IL2CPP.dll",
+            "winhttp.dll",
+            "doorstop_config.ini",
+            ".doorstop_version",
+            "changelog.txt",
+        ] {
+            assert_eq!(
+                std::fs::read(game.join(relative)).expect("placed"),
+                relative.as_bytes()
+            );
+        }
+        assert!(game.join("BepInEx/config/theirs.cfg").is_file());
+        assert!(!game.join(paths::INSTALL_PART).exists());
+        assert!(!game.join(paths::INSTALL_READY).exists());
+    }
+
+    #[test]
+    fn an_install_whose_last_move_was_made_is_not_taken_back() {
+        let (_temp, base) = canonical_temp();
+        let unpacked = unpacked_in(&base);
+        let game = base.join("game");
+        std::fs::create_dir(&game).expect("the game");
+        place(&unpacked, &game, &allowed).expect("BepInEx is placed");
+        // The launcher died after winhttp.dll was moved and before the empty
+        // staging folder was removed.
+        std::fs::create_dir_all(game.join(paths::INSTALL_READY).join("BepInEx"))
+            .expect("the emptied staging folder");
+
+        clear_interrupted(&game).expect("cleared");
+
+        assert!(!game.join(paths::INSTALL_READY).exists());
+        for kept in ["dotnet/coreclr.dll", paths::PROBE, "winhttp.dll"] {
+            assert!(game.join(kept).is_file(), "{kept} stays");
+        }
+    }
+
+    #[test]
+    fn only_what_left_the_staging_folder_is_taken_back() {
+        let (_temp, base) = canonical_temp();
+        let game = base.join("game");
+        // The staging folder still holds dotnet and winhttp.dll, so neither
+        // was moved: a `dotnet` in the game folder is somebody else's. The
+        // core folder and the config are gone from it, so those were moved.
+        put(&game, "oamod-install.ready/dotnet/coreclr.dll", b"staged");
+        put(&game, "oamod-install.ready/winhttp.dll", b"staged");
+        put(&game, "oamod-install.ready/changelog.txt", b"staged");
+        put(&game, "dotnet/theirs.dll", b"theirs");
+        put(&game, "changelog.txt", b"theirs");
+        put(&game, "BepInEx/core/moved.dll", b"moved");
+        put(&game, "BepInEx/config/theirs.cfg", b"theirs");
+        put(&game, "doorstop_config.ini", b"moved");
+
+        clear_interrupted(&game).expect("cleared");
+
+        let mut left: Vec<_> = files::scan_tree(&game)
+            .expect("a scan")
+            .files
+            .into_iter()
+            .map(|file| file.0.strip_prefix(&game).expect("below").to_path_buf())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            [
+                PathBuf::from("BepInEx").join("config").join("theirs.cfg"),
+                PathBuf::from("changelog.txt"),
+                PathBuf::from("dotnet").join("theirs.dll"),
+            ]
+        );
+        assert!(!game.join("BepInEx/core").exists());
+    }
+
+    #[test]
+    fn a_link_under_a_staging_name_is_refused_and_its_target_survives() {
+        for name in [paths::INSTALL_PART, paths::INSTALL_READY] {
+            let (_temp, base) = canonical_temp();
+            let unpacked = unpacked_in(&base);
+            let game = base.join("game");
+            let elsewhere = base.join("elsewhere");
+            std::fs::create_dir(&game).expect("the game");
+            // It looks like an install that stopped while moving, and it is
+            // a link to a folder that is not the launcher's.
+            put(&elsewhere, "winhttp.dll", b"not ours");
+            put(&game, "doorstop_config.ini", b"not ours either");
+            files::tests::link_dir(&elsewhere, &game.join(name));
+
+            assert!(matches!(
+                clear_interrupted(&game),
+                Err(CoreError::UnsafePath { .. })
+            ));
+            assert!(matches!(
+                place(&unpacked, &game, &allowed),
+                Err(CoreError::UnsafePath { .. })
+            ));
+
+            assert!(elsewhere.join("winhttp.dll").is_file(), "{name}");
+            assert!(game.join("doorstop_config.ini").is_file(), "{name}");
+            assert!(!game.join("dotnet").exists(), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_zip_with_a_file_in_bepinex_outside_core_is_refused() {
+        use sha2::Digest;
+        let (_temp, base) = canonical_temp();
+        let unpacked = unpacked_in(&base);
+        let sha256 = |relative: &str| crate::net::hex(&sha2::Sha256::digest(relative.as_bytes()));
+        let expected = manifest::BepInEx {
+            label: "test".to_owned(),
+            url: String::new(),
+            size: 1,
+            sha256: String::new(),
+            probe_sha256: sha256(paths::PROBE),
+            root_files: ROOT_FILES
+                .iter()
+                .map(|name| ((*name).to_owned(), sha256(name)))
+                .collect(),
+        };
+        check_unpacked(&unpacked, &expected).expect("the plain build passes");
+        // An empty folder is nothing that could be dropped.
+        std::fs::create_dir_all(unpacked.join("BepInEx/plugins")).expect("an empty folder");
+        check_unpacked(&unpacked, &expected).expect("an empty folder passes");
+
+        put(&unpacked, "BepInEx/plugins/Extra/Extra.dll", b"extra");
+
+        let refused = check_unpacked(&unpacked, &expected);
+        assert!(
+            matches!(&refused, Err(CoreError::Archive(reason)) if reason.contains("Extra.dll")),
+            "{refused:?}"
+        );
     }
 
     #[test]

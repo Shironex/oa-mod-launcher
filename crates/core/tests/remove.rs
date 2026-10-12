@@ -231,33 +231,74 @@ async fn an_adopted_bepinex_makes_mod_only_the_default() {
 #[tokio::test(flavor = "multi_thread")]
 async fn root_files_the_launcher_does_not_recognise_are_kept_unless_asked() {
     let (sandbox, _server, launcher) = installed().await;
-    put(
-        &sandbox.game,
-        "winhttp.dll",
-        b"MZ a proxy of something else",
-    );
     put(&sandbox.game, "changelog.txt", b"edited by hand");
 
     let plan = launcher.removal_preview().expect("a plan");
     assert_eq!(
         plan.root_files,
-        ["doorstop_config.ini", ".doorstop_version"]
+        ["winhttp.dll", "doorstop_config.ini", ".doorstop_version"]
     );
+    assert_eq!(plan.unrecognised_root_files, ["changelog.txt"]);
+    assert!(plan.kept_with_proxy.is_empty());
+
+    let outcome = launcher.remove_all(false).expect("the rest is removed");
+
+    assert_eq!(outcome.kept, ["changelog.txt"]);
+    let mut expected = VANILLA.map(str::to_owned).to_vec();
+    expected.push("changelog.txt".to_owned());
+    expected.sort();
+    assert_eq!(listing(&sandbox.game), expected);
     assert_eq!(
-        plan.unrecognised_root_files,
-        ["winhttp.dll", "changelog.txt"]
+        std::fs::read(sandbox.game.join("changelog.txt")).expect("kept"),
+        b"edited by hand"
+    );
+
+    let outcome = launcher.remove_all(true).expect("now it goes too");
+    assert!(outcome.kept.is_empty());
+    assert_eq!(listing(&sandbox.game), VANILLA);
+    assert_eq!(outcome.snapshot.status, Status::Clean);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_proxy_dll_that_is_not_recognised_keeps_its_loader_files_with_it() {
+    let (sandbox, _server, launcher) = installed().await;
+    put(
+        &sandbox.game,
+        "winhttp.dll",
+        b"MZ a proxy of something else",
+    );
+    let loader_files = ["winhttp.dll", "doorstop_config.ini", ".doorstop_version"];
+
+    // The config and the version file are the release's own, and still they
+    // stay: a proxy DLL without its config is a game that may not start.
+    let plan = launcher.removal_preview().expect("a plan");
+    assert_eq!(plan.root_files, ["changelog.txt"]);
+    assert_eq!(plan.unrecognised_root_files, loader_files);
+    assert_eq!(
+        plan.kept_with_proxy,
+        ["doorstop_config.ini", ".doorstop_version"]
     );
 
     let outcome = launcher.remove_all(false).expect("the rest is removed");
 
-    assert_eq!(outcome.kept, ["winhttp.dll", "changelog.txt"]);
-    let mut expected = VANILLA.map(str::to_owned).to_vec();
-    expected.extend(["changelog.txt".to_owned(), "winhttp.dll".to_owned()]);
-    expected.sort();
-    assert_eq!(listing(&sandbox.game), expected);
+    assert_eq!(outcome.kept, loader_files);
+    assert_eq!(
+        listing(&sandbox.game),
+        [
+            ".doorstop_version",
+            "GameAssembly.dll",
+            "Golf With Your Friends.exe",
+            "doorstop_config.ini",
+            "winhttp.dll"
+        ]
+    );
     assert_eq!(
         std::fs::read(sandbox.game.join("winhttp.dll")).expect("kept"),
         b"MZ a proxy of something else"
+    );
+    assert_eq!(
+        std::fs::read(sandbox.game.join("doorstop_config.ini")).expect("kept"),
+        support::bepinex_file("doorstop_config.ini")
     );
     // Something is still there, so this is not the clean state.
     assert!(matches!(
@@ -526,4 +567,218 @@ fn without_a_game_folder_nothing_is_removed() {
     assert!(launcher.removal_preview().is_err());
     assert_eq!(listing(&sandbox.game), before);
     assert_eq!(sandbox.saved_state(), State::default());
+}
+
+/// Windows answers "access denied", not a sharing violation, when the running
+/// game has a DLL mapped. A folder with the read-only flag is refused the
+/// same way, which is how the test gets that answer without a game.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delete_refused_while_the_game_runs_is_reported_as_the_game_running() {
+    let sandbox = Sandbox::new();
+    let server = TestServer::start().await;
+    server.publish(&Release::new("0.1.0"));
+    // Once armed, the game starts the moment the removal has begun: the
+    // proxy DLL is the first thing to go.
+    let armed = Arc::new(AtomicBool::new(false));
+    let mut config = sandbox.config(&server);
+    let switch = Arc::clone(&armed);
+    config.running =
+        Arc::new(move |root| switch.load(Ordering::SeqCst) && !root.join("winhttp.dll").exists());
+    let launcher = Launcher::open(config).expect("the launcher opens");
+    launcher.install(&quiet).await.expect("the install works");
+    let core = sandbox.game.join("BepInEx").join("core");
+    let read_only = |on: bool| {
+        let mut permissions = std::fs::metadata(&core).expect("metadata").permissions();
+        permissions.set_readonly(on);
+        std::fs::set_permissions(&core, permissions).expect("the flag is set");
+    };
+    read_only(true);
+
+    armed.store(true, Ordering::SeqCst);
+    let error = launcher.remove_all(false).expect_err("the folder refuses");
+    assert!(matches!(error, CoreError::GameRunning), "{error}");
+
+    // The same refusal without a running game is the folder's own.
+    armed.store(false, Ordering::SeqCst);
+    let error = launcher.remove_all(false).expect_err("the folder refuses");
+    assert!(matches!(error, CoreError::NotWritable { .. }), "{error}");
+
+    read_only(false);
+    launcher.remove_all(false).expect("now it goes");
+    assert_eq!(listing(&sandbox.game), VANILLA);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_link_where_the_backups_belong_stops_the_removal_before_anything_is_copied() {
+    let (sandbox, _server, launcher) = installed().await;
+    other_peoples_things(&sandbox);
+    let outside = sandbox.steam.join("outside");
+    put(&outside, "precious.txt", b"keep me");
+    link_dir(&outside, &sandbox.data.join("backups"));
+    let before = listing(&sandbox.game);
+
+    let error = launcher
+        .remove_all(false)
+        .expect_err("no backup is written through a link");
+
+    assert!(matches!(error, CoreError::UnsafePath { .. }), "{error}");
+    assert_eq!(listing(&sandbox.game), before, "nothing was deleted");
+    assert_eq!(
+        listing(&outside),
+        ["precious.txt"],
+        "nothing was copied through the link"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_file_named_bepinex_is_kept_and_named_and_the_removal_still_completes() {
+    let sandbox = Sandbox::new();
+    let server = TestServer::start().await;
+    server.publish(&Release::new("0.1.0"));
+    let launcher = Launcher::open(sandbox.config(&server)).expect("the launcher opens");
+    // The check brings the checksums the root files are recognised by.
+    launcher.check().await;
+    for name in [
+        "winhttp.dll",
+        "doorstop_config.ini",
+        ".doorstop_version",
+        "changelog.txt",
+        "dotnet/coreclr.dll",
+    ] {
+        put(&sandbox.game, name, support::bepinex_file(name));
+    }
+    std::fs::write(sandbox.game.join("BepInEx"), b"a file, not a folder").expect("a file");
+
+    let plan = launcher.removal_preview().expect("a plan");
+    assert_eq!(plan.kept, ["BepInEx"]);
+    assert_eq!(plan.folders, ["dotnet"]);
+    assert_eq!(plan.root_files.len(), 4);
+
+    // Twice: the first run must not leave a folder the second cannot finish.
+    for _ in 0..2 {
+        let outcome = launcher.remove_all(false).expect("the removal completes");
+        assert_eq!(outcome.kept, ["BepInEx"]);
+        let mut expected = VANILLA.map(str::to_owned).to_vec();
+        expected.insert(0, "BepInEx".to_owned());
+        assert_eq!(listing(&sandbox.game), expected);
+    }
+    assert_eq!(
+        std::fs::read(sandbox.game.join("BepInEx")).expect("kept"),
+        b"a file, not a folder"
+    );
+    launcher.remove_mod().expect("there is no mod to remove");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_folder_named_like_a_root_file_and_a_file_named_dotnet_are_kept_and_named() {
+    let (sandbox, _server, launcher) = installed().await;
+    std::fs::remove_file(sandbox.game.join("winhttp.dll")).expect("remove the proxy");
+    put(&sandbox.game, "winhttp.dll/inside.txt", b"a folder");
+    std::fs::remove_dir_all(sandbox.game.join("dotnet")).expect("remove the runtime");
+    std::fs::write(sandbox.game.join("dotnet"), b"a file").expect("a file");
+
+    let plan = launcher.removal_preview().expect("a plan");
+    assert_eq!(plan.kept, ["winhttp.dll", "dotnet"]);
+    assert_eq!(plan.folders, ["BepInEx"]);
+
+    for _ in 0..2 {
+        let outcome = launcher.remove_all(true).expect("the removal completes");
+        assert_eq!(outcome.kept, ["winhttp.dll", "dotnet"]);
+        assert_eq!(
+            listing(&sandbox.game),
+            [
+                "GameAssembly.dll",
+                "Golf With Your Friends.exe",
+                "dotnet",
+                "winhttp.dll/inside.txt"
+            ]
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn steam_turning_busy_after_the_backup_gets_nothing_deleted() {
+    let sandbox = Sandbox::new();
+    let server = TestServer::start().await;
+    server.publish(&Release::new("0.1.0"));
+    // Once armed, Steam starts an update of the game right after the launcher
+    // has looked for the first time: the first question about the game is
+    // asked after that look, and it is what rewrites Steam's file here.
+    let armed = Arc::new(AtomicBool::new(false));
+    let mut config = sandbox.config(&server);
+    let (switch, library) = (Arc::clone(&armed), sandbox.steam.clone());
+    config.running = Arc::new(move |_| {
+        if switch.swap(false, Ordering::SeqCst) {
+            support::write_app_manifest_in_state(&library, support::INSTALL_DIR, 1026);
+        }
+        false
+    });
+    let launcher = Launcher::open(config).expect("the launcher opens");
+    launcher.install(&quiet).await.expect("the install works");
+    other_peoples_things(&sandbox);
+    let before = listing(&sandbox.game);
+
+    armed.store(true, Ordering::SeqCst);
+    let error = launcher.remove_all(true).expect_err("Steam is busy by now");
+
+    assert!(matches!(error, CoreError::SteamBusy), "{error}");
+    assert_eq!(listing(&sandbox.game), before, "nothing was deleted");
+    assert!(
+        sandbox.data.join("backups").is_dir(),
+        "the backup was made before Steam started, and it is only a copy"
+    );
+}
+
+/// The copy of one foreign file fails: Windows refuses to read a file that
+/// another program holds open for itself alone.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_foreign_file_that_cannot_be_copied_gets_nothing_deleted() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let (sandbox, _server, launcher) = installed().await;
+    other_peoples_things(&sandbox);
+    let before = listing(&sandbox.game);
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(sandbox.game.join("BepInEx/plugins/loose.dll"))
+        .expect("the file is held");
+
+    for include_unrecognised in [false, true] {
+        let error = launcher
+            .remove_all(include_unrecognised)
+            .expect_err("the backup cannot be made");
+        assert!(matches!(error, CoreError::Io { .. }), "{error}");
+        assert_eq!(listing(&sandbox.game), before, "nothing was deleted");
+        assert!(sandbox.game.join("winhttp.dll").is_file());
+        assert!(sandbox.saved_state().bepinex.is_some());
+    }
+
+    drop(held);
+    let outcome = launcher.remove_all(false).expect("now it works");
+    assert_eq!(listing(&sandbox.game), VANILLA);
+    let backup = std::path::PathBuf::from(outcome.backup_dir.expect("a backup was made"));
+    assert_eq!(
+        std::fs::read(backup.join("BepInEx/plugins/loose.dll")).expect("copied"),
+        b"MZ loose"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dotnet_folder_with_no_file_in_it_is_removed() {
+    let sandbox = Sandbox::new();
+    // No runtime in it, and nothing else either: there is nothing to lose.
+    std::fs::create_dir_all(sandbox.game.join("dotnet/shared/empty")).expect("empty folders");
+    let launcher = Launcher::open(sandbox.config_offline()).expect("the launcher opens");
+
+    let plan = launcher.removal_preview().expect("a plan");
+    assert_eq!(plan.folders, ["dotnet"]);
+    assert!(plan.kept.is_empty());
+
+    let outcome = launcher.remove_all(false).expect("the folder is removed");
+
+    assert!(outcome.kept.is_empty());
+    assert!(!sandbox.game.join("dotnet").exists());
+    assert_eq!(outcome.snapshot.status, Status::Clean);
 }

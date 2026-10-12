@@ -232,9 +232,14 @@ fn app_manifest(text: &str) -> std::result::Result<AppManifest, String> {
 /// library path, so a separator, a drive letter or a `..` would point the
 /// launcher at a folder Steam never named. Both kinds of slash are refused on
 /// every system. A name Windows would quietly alter (a trailing dot or space)
-/// is refused too, because it would not name the folder it spells.
-fn is_bare_name(name: &str) -> bool {
+/// is refused too, because it would not name the folder it spells, and so is
+/// a device name (`CON`, `NUL`, `COM1` and the like, with or without an
+/// extension), which Windows never opens as a file.
+///
+/// The same rule judges every part of an entry name of a downloaded zip.
+pub(crate) fn is_bare_name(name: &str) -> bool {
     !name.is_empty()
+        && !is_device_name(name)
         && name != "."
         && name != ".."
         && !name.ends_with(['.', ' '])
@@ -242,6 +247,27 @@ fn is_bare_name(name: &str) -> bool {
         && !name.chars().any(|c| {
             c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
         })
+}
+
+/// Whether Windows reads `name` as a device: the part before the first dot,
+/// without trailing spaces and in any case, is one of the reserved names.
+fn is_device_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name).trim_end_matches(' ');
+    let stem = stem.to_ascii_uppercase();
+    let numbered = |prefix: &str| {
+        stem.strip_prefix(prefix).is_some_and(|rest| {
+            let mut rest = rest.chars();
+            matches!(
+                (rest.next(), rest.next()),
+                (Some('0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None)
+            )
+        })
+    };
+    matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || numbered("COM")
+        || numbered("LPT")
 }
 
 /// One value of Valve's key and value text format.
@@ -524,6 +550,10 @@ mod tests {
             " Golf",
             "Golf\\nWith",
             "Golf|With",
+            "CON",
+            "nul.d",
+            "COM1",
+            "lpt9",
         ] {
             let result = app_manifest(&manifest_text(hostile));
             assert!(

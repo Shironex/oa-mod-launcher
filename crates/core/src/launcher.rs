@@ -386,7 +386,9 @@ impl Drop for Lease<'_> {
 }
 
 impl Launcher {
-    /// Open the launcher: read the state and clear `staging/`.
+    /// Open the launcher: read the state, clear `staging/`, and undo an
+    /// install of BepInEx that was interrupted, when the game folder may be
+    /// written to at this moment.
     ///
     /// A state file that cannot be read does not stop the launcher from
     /// opening: the snapshot then has the status [`Status::Error`], and every
@@ -398,13 +400,15 @@ impl Launcher {
     pub fn open(config: Config) -> Result<Arc<Self>> {
         let client = net::client(&config.launcher_version.to_string())?;
         let state = State::load(&config.layout.state_file()).map_err(|error| error.to_string());
-        clean_staging(&config.layout);
+        // Best effort here: a staging folder that cannot be cleared stops the
+        // next install, which says why, and not the launcher from opening.
+        let _ = clean_staging(&config.layout);
 
         let cached = std::fs::read_to_string(config.layout.cached_manifest())
             .ok()
             .and_then(|text| Manifest::parse_from(&text, &config.download_prefix).ok());
 
-        Ok(Arc::new(Self {
+        let launcher = Arc::new(Self {
             config,
             client,
             inner: Mutex::new(Inner {
@@ -414,7 +418,13 @@ impl Launcher {
                 activity: Activity::Idle,
             }),
             busy: Arc::new(AtomicBool::new(false)),
-        }))
+        });
+        // An install that died is undone now, so the first snapshot shows
+        // the game as it was. Best effort: without a game folder, while the
+        // game runs or while Steam is busy it waits for the next install or
+        // removal, which both begin with the same step.
+        let _ = launcher.writable_game();
+        Ok(launcher)
     }
 
     /// The directory layout this launcher uses.
@@ -534,11 +544,15 @@ impl Launcher {
             Ok((manifest, bytes)) => {
                 inner.last_check = Some(Ok(manifest.clone()));
                 inner.cached = Some(manifest.clone());
-                let cache = self.config.layout.cached_manifest();
-                if let Some(parent) = cache.parent() {
-                    let _ = std::fs::create_dir_all(parent);
+                // Only a convenience for the next start, so a cache that
+                // cannot be written, or that a link stands in for, is skipped.
+                let layout = &self.config.layout;
+                if let Ok(cache) = layout.checked(&layout.cached_manifest()) {
+                    if let Some(parent) = cache.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(&cache, bytes);
                 }
-                let _ = std::fs::write(&cache, bytes);
             }
             Err(error) => inner.last_check = Some(Err(error.to_string())),
         }
@@ -659,7 +673,8 @@ impl Launcher {
         let mut inner = self.lock();
         let mut state = inner.state.clone().map_err(CoreError::State)?;
         change(&mut state);
-        state.save(&self.config.layout.state_file())?;
+        let layout = &self.config.layout;
+        state.save(&layout.checked(&layout.state_file())?)?;
         inner.state = Ok(state);
         Ok(())
     }
@@ -704,13 +719,15 @@ impl Launcher {
     }
 
     /// The game folder, once everything that must hold before a write holds:
-    /// it is the game, Steam is not busy with it, and it is not running.
+    /// it is the game, Steam is not busy with it, it is not running, and what
+    /// an install that died left in it is undone.
     pub(crate) fn writable_game(&self) -> Result<Located> {
         let located = self.locate(&self.state()?)?;
         if located.steam_busy {
             return Err(CoreError::SteamBusy);
         }
         self.refuse_while_running(&located.root)?;
+        crate::install::clear_interrupted(&located.root)?;
         Ok(located)
     }
 
@@ -720,6 +737,23 @@ impl Launcher {
             Err(CoreError::GameRunning)
         } else {
             Ok(())
+        }
+    }
+
+    /// Say why the game folder refused a write or a delete, when the game is
+    /// the reason. Windows answers "access denied", not a sharing violation,
+    /// for a DLL a running game has loaded, and that reads as a folder that
+    /// is not writable. So the game is asked about once more, and a running
+    /// game is what the player is told.
+    pub(crate) fn explained(&self, error: CoreError) -> CoreError {
+        if matches!(error, CoreError::NotWritable { .. })
+            && self
+                .game_dir()
+                .is_some_and(|root| (self.config.running)(&root))
+        {
+            CoreError::GameRunning
+        } else {
+            error
         }
     }
 
@@ -851,20 +885,21 @@ fn warnings(
     warnings
 }
 
-/// Delete everything in `staging/`: the leftovers of an interrupted run.
-/// The folder belongs to the launcher alone, and nothing in it is a link the
-/// launcher made, so a tree with a link in it is left where it is.
-pub(crate) fn clean_staging(layout: &Layout) {
-    let staging = layout.staging_dir();
-    let Ok(entries) = std::fs::read_dir(&staging) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if files::delete_tree(&path).is_err() {
-            let _ = files::delete_file(&path);
-        }
-    }
+/// Delete `staging/` with the leftovers of an interrupted run in it, and hand
+/// out where it was.
+///
+/// The folder belongs to the launcher alone and nothing in it is a link the
+/// launcher made. So a link where the folder belongs, or anywhere in it, is
+/// not followed and not removed: the whole folder is left as it is.
+///
+/// # Errors
+///
+/// [`CoreError::UnsafePath`] in that case. Nothing may be staged then: a
+/// download would be written through the link.
+pub(crate) fn clean_staging(layout: &Layout) -> Result<PathBuf> {
+    let staging = layout.checked(&layout.staging_dir())?;
+    files::delete_tree(&staging)?;
+    Ok(staging)
 }
 
 #[cfg(test)]

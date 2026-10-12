@@ -105,8 +105,11 @@ The mod repository keeps one file that describes the BepInEx build it needs. `bu
 The launcher unpacks the zip into its own staging folder and refuses it unless:
 
 - its top level holds nothing but `BepInEx/`, `dotnet/` and the four root files, and all four are there;
+- every file in `BepInEx/` is in `BepInEx/core/` (that folder is the only one of BepInEx the launcher moves into the game folder, so anything else would be dropped);
 - `BepInEx/core/BepInEx.Unity.IL2CPP.dll` hashes to `probe_sha256` and each root file to its entry in `root_files`;
-- no entry is absolute, has a drive letter or a `..` part, or is a symbolic link.
+- no entry is absolute, has a drive letter or a `..` part, or is a symbolic link;
+- no part of an entry name is one Windows would rewrite: a trailing dot or space, or a device name (`CON`, `PRN`, `AUX`, `NUL`, `COM0` to `COM9`, `LPT0` to `LPT9`, with or without an extension);
+- it holds at most 20 000 entries and unpacks to at most 2 GB, counted both by the sizes it declares and by the bytes that are written.
 
 ## The `.sig` format
 
@@ -138,6 +141,8 @@ Two release keys, both minisign keys made by `pnpm tauri signer generate`. There
 | `updater`  | the updater configuration (a later slice)           | every launcher installer             |
 
 **The development key** (`dev-keys/dev.key`, public half `dev-keys/dev.key.pub`) is not one of them. Its private half is committed with an empty password on purpose, so it proves nothing. A debug build of the launcher trusts it in addition to the manifest key, for local test manifests; in a release build the constant does not exist (`#[cfg(debug_assertions)]` in `signature.rs`). The scripts sign with it by default for any address that is not on github.com, and refuse to use it by default for one that is.
+
+**The data root override** (`OA_MOD_LAUNCHER_ROOT`) follows the same rule. A debug build keeps `state.json`, `staging/`, `cache/` and `backups/` in the folder the variable names. A release build does not read the variable and always uses `%LOCALAPPDATA%\OaModLauncher`, so nothing in the environment can redirect what it writes and deletes. Below that root the launcher refuses to write or delete through a junction or a symbolic link: one at `staging/` or inside it stops an install, one at `backups/` stops a full removal, and neither is followed or removed.
 
 ## What pins each piece
 

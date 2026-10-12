@@ -12,8 +12,8 @@
 //!   removal, and what it points at is not touched.
 //! - **Other people's files are copied first.** Plugins, patchers and
 //!   settings that are not the mod's go to `backups/<time>/` in the launcher's
-//!   own folder, and the copy is compared with the original before anything
-//!   is deleted.
+//!   own folder, and the copy is compared with the original, checksum by
+//!   checksum, before anything is deleted. A link where `backups/` belongs stops the removal.
 //! - **Vanilla first.** `winhttp.dll` goes first: from that moment the game
 //!   starts without BepInEx, whatever happens to the rest.
 //! - **Again is fine.** A removal that was interrupted is finished by running
@@ -39,6 +39,11 @@ const ROOT_FILES_IN_REMOVAL_ORDER: [&str; 4] = [
     ".doorstop_version",
     "changelog.txt",
 ];
+
+/// The root files that only mean something next to the proxy DLL. They are
+/// deleted with it or kept with it: a `winhttp.dll` the launcher does not
+/// recognise would be left without the config it reads.
+const LOADER_FILES: [&str; 2] = [paths::DOORSTOP_CONFIG, ".doorstop_version"];
 
 /// What "remove only OA Mod" deletes, in order. The folder is removed after
 /// them when it is empty.
@@ -93,12 +98,19 @@ pub struct RemovalPlan {
     /// The root files a full removal would delete: the ones whose content
     /// the launcher recognises.
     pub root_files: Vec<String>,
-    /// Root files of BepInEx whose content the launcher does not recognise.
-    /// A full removal keeps them unless it is told to include them.
+    /// Root files of BepInEx a full removal keeps unless it is told to
+    /// include them: the ones whose content the launcher does not recognise,
+    /// and the ones in [`RemovalPlan::kept_with_proxy`].
     pub unrecognised_root_files: Vec<String>,
+    /// The part of [`RemovalPlan::unrecognised_root_files`] the launcher does
+    /// recognise and keeps all the same, because `winhttp.dll` is one it does
+    /// not recognise: `doorstop_config.ini` and `.doorstop_version` stay or
+    /// go with the proxy DLL that reads them.
+    pub kept_with_proxy: Vec<String>,
     /// What a full removal never deletes although it has a name of BepInEx,
-    /// because it is not what the name says: a `dotnet` folder without the
-    /// .NET runtime in it, or a folder under the name of a root file.
+    /// because it is not what the name says: a `dotnet` folder that holds
+    /// files and no .NET runtime, a folder under the name of a root file, or a file
+    /// under the name `dotnet` or `BepInEx`.
     pub kept: Vec<String>,
     /// Other people's plugins, patchers and settings. A full removal copies
     /// them to the backup folder first.
@@ -114,9 +126,10 @@ pub struct RemovalPlan {
 pub struct RemovalOutcome {
     /// What the window should show now.
     pub snapshot: Snapshot,
-    /// What was left in the game folder on purpose, relative to it: the
-    /// unrecognised root files that were not included, and everything in
-    /// [`RemovalPlan::kept`].
+    /// What was left in the game folder on purpose, relative to it:
+    /// [`RemovalPlan::unrecognised_root_files`] when they were not included
+    /// (the loader files kept with an unrecognised `winhttp.dll` among them),
+    /// and everything in [`RemovalPlan::kept`].
     pub kept: Vec<String>,
     /// Where other people's files were copied to, when there were any.
     pub backup_dir: Option<String>,
@@ -148,12 +161,13 @@ impl Launcher {
     ///
     /// [`CoreError::Busy`], [`CoreError::GameNotFound`],
     /// [`CoreError::SteamBusy`], [`CoreError::GameRunning`],
-    /// [`CoreError::UnsafePath`], [`CoreError::NotWritable`].
+    /// [`CoreError::UnsafePath`], [`CoreError::NotWritable`]. A delete the
+    /// folder refuses while the game runs is [`CoreError::GameRunning`].
     pub fn remove_mod(&self) -> Result<Snapshot> {
         let lease = self.lease(Activity::Removing)?;
         let removed = self.remove_mod_steps();
         drop(lease);
-        removed?;
+        removed.map_err(|error| self.explained(error))?;
         Ok(self.snapshot())
     }
 
@@ -180,19 +194,22 @@ impl Launcher {
     /// the backup folder first.
     ///
     /// Root files whose content the launcher does not recognise are kept
-    /// unless `include_unrecognised` is set; the outcome names what was kept.
+    /// unless `include_unrecognised` is set, and with an unrecognised
+    /// `winhttp.dll` its config and version file are kept too; the outcome
+    /// names what was kept.
     ///
     /// # Errors
     ///
     /// As for [`Launcher::remove_mod`], and
     /// [`CoreError::BackupIncomplete`] when the copy of other people's files
     /// does not match the originals. Nothing is deleted in that case, nor
-    /// when a link is found in what would be deleted.
+    /// when a link is found in what would be deleted, nor when the game was
+    /// started or Steam became busy while the backup was made.
     pub fn remove_all(&self, include_unrecognised: bool) -> Result<RemovalOutcome> {
         let lease = self.lease(Activity::Removing)?;
         let removed = self.remove_all_steps(include_unrecognised);
         drop(lease);
-        let (kept, backup_dir) = removed?;
+        let (kept, backup_dir) = removed.map_err(|error| self.explained(error))?;
         Ok(RemovalOutcome {
             snapshot: self.snapshot(),
             kept,
@@ -221,10 +238,16 @@ impl Launcher {
         let backup_dir = if foreign.is_empty() {
             None
         } else {
-            Some(back_up(&self.layout().backups_dir(), root, &foreign)?)
+            let layout = self.layout();
+            let backups = layout.checked(&layout.backups_dir())?;
+            Some(back_up(&backups, root, &foreign)?)
         };
 
-        self.refuse_while_running(root)?;
+        // Everything is asked again: the backup can take a while, and the
+        // game may have been started or Steam may have begun an update.
+        if self.writable_game()?.root != *root {
+            return Err(CoreError::GameNotFound);
+        }
         // Not the names of the plan but the constants again, in the order of
         // the constants: the plan only says which of them to delete.
         for name in ROOT_FILES_IN_REMOVAL_ORDER {
@@ -232,10 +255,13 @@ impl Launcher {
                 files::delete_file(&files::inside(root, name)?)?;
             }
         }
-        if shown.folders.iter().any(|folder| folder == paths::DOTNET) {
-            files::delete_tree(&files::inside(root, paths::DOTNET)?)?;
+        // Both folders only when the plan lists them: what has one of the
+        // two names and is not the folder is in `kept`, and is left alone.
+        for folder in [paths::DOTNET, paths::BEPINEX] {
+            if shown.folders.iter().any(|planned| planned == folder) {
+                files::delete_tree(&files::inside(root, folder)?)?;
+            }
         }
-        files::delete_tree(&files::inside(root, paths::BEPINEX)?)?;
 
         let left = inspect::inspect(root, &State::default(), None)?;
         self.update_state(|state| {
@@ -262,6 +288,7 @@ fn plan(root: &Path, state: &State, reference: Option<&manifest::BepInEx>) -> Re
 
     let mut root_files = Vec::new();
     let mut unrecognised_root_files = Vec::new();
+    let mut kept_with_proxy = Vec::new();
     let mut kept = Vec::new();
     for name in ROOT_FILES_IN_REMOVAL_ORDER {
         let path = files::inside(root, name)?;
@@ -278,10 +305,18 @@ fn plan(root: &Path, state: &State, reference: Option<&manifest::BepInEx>) -> Re
             .as_ref()
             .and_then(|record| record.root_files.get(name));
         let named = reference.and_then(|reference| reference.root_files.get(name));
-        if recorded == Some(&on_disk) || named == Some(&on_disk) {
-            root_files.push(name.to_owned());
-        } else {
+        // The proxy DLL is the first name of the list, so by the time its
+        // loader files are judged it is known whether it stays.
+        let proxy_stays = unrecognised_root_files
+            .iter()
+            .any(|kept| kept == paths::WINHTTP);
+        if recorded != Some(&on_disk) && named != Some(&on_disk) {
             unrecognised_root_files.push(name.to_owned());
+        } else if proxy_stays && LOADER_FILES.contains(&name) {
+            unrecognised_root_files.push(name.to_owned());
+            kept_with_proxy.push(name.to_owned());
+        } else {
+            root_files.push(name.to_owned());
         }
     }
 
@@ -289,8 +324,12 @@ fn plan(root: &Path, state: &State, reference: Option<&manifest::BepInEx>) -> Re
     let dotnet = files::inside(root, paths::DOTNET)?;
     if dotnet.exists() {
         // A folder named `dotnet` is BepInEx's runtime only when the runtime
-        // is in it. Anything else under that name is not ours to delete.
-        if dotnet.is_dir() && files::inside(root, paths::DOTNET_PROOF)?.is_file() {
+        // is in it. Anything else under that name is not ours to delete,
+        // unless there is no file in it at all: then nothing can be lost.
+        let empty_or_runtime = dotnet.is_dir()
+            && (files::inside(root, paths::DOTNET_PROOF)?.is_file()
+                || files::scan_tree(&dotnet).is_ok_and(|tree| tree.files.is_empty()));
+        if empty_or_runtime {
             files::scan_tree(&dotnet)?;
             folders.push(paths::DOTNET.to_owned());
         } else {
@@ -301,6 +340,9 @@ fn plan(root: &Path, state: &State, reference: Option<&manifest::BepInEx>) -> Re
     if bepinex.is_dir() {
         files::scan_tree(&bepinex)?;
         folders.push(paths::BEPINEX.to_owned());
+    } else if std::fs::symlink_metadata(&bepinex).is_ok() {
+        // A file under the name of the folder: not BepInEx, not ours.
+        kept.push(paths::BEPINEX.to_owned());
     }
 
     let mut foreign = Vec::new();
@@ -356,6 +398,7 @@ fn plan(root: &Path, state: &State, reference: Option<&manifest::BepInEx>) -> Re
             folders,
             root_files,
             unrecognised_root_files,
+            kept_with_proxy,
             kept,
             foreign: foreign_shown,
             mod_only_recommended,
@@ -376,14 +419,15 @@ fn back_up(backups: &Path, root: &Path, items: &[PathBuf]) -> Result<PathBuf> {
         .map_or(0, |elapsed| elapsed.as_secs());
     let mut target = backups.join(stamp(now));
     let mut attempt = 2;
-    while target.exists() {
+    // Whatever is under that name, a dangling link included, is in the way.
+    while std::fs::symlink_metadata(&target).is_ok() {
         target = backups.join(format!("{}-{attempt}", stamp(now)));
         attempt += 1;
     }
     const COPY: &str = "copy a file to the backup folder";
 
-    // Every file with where it goes and how long it is.
-    let mut copies: Vec<(PathBuf, PathBuf, u64)> = Vec::new();
+    // Every file with where it goes: (the copy, the original).
+    let mut copies: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut folders: Vec<PathBuf> = Vec::new();
     let relative = |path: &Path| {
         path.strip_prefix(root)
@@ -400,21 +444,22 @@ fn back_up(backups: &Path, root: &Path, items: &[PathBuf]) -> Result<PathBuf> {
             for folder in &tree.dirs {
                 folders.push(relative(folder)?);
             }
-            for (file, bytes) in tree.files {
-                copies.push((relative(&file)?, file, bytes));
+            for (file, _) in tree.files {
+                copies.push((relative(&file)?, file));
             }
         } else {
-            let bytes = std::fs::metadata(item)
-                .map_err(CoreError::io(COPY, item))?
-                .len();
-            copies.push((relative(item)?, item.clone(), bytes));
+            copies.push((relative(item)?, item.clone()));
         }
     }
 
+    // `create_dir`, not `create_dir_all`, for the backup folder itself: it
+    // must be new, so everything below it is what this call put there.
+    std::fs::create_dir_all(backups).map_err(CoreError::io(COPY, backups))?;
+    std::fs::create_dir(&target).map_err(CoreError::io(COPY, &target))?;
     for folder in &folders {
         std::fs::create_dir_all(folder).map_err(CoreError::io(COPY, folder))?;
     }
-    for (to, from, _) in &copies {
+    for (to, from) in &copies {
         if let Some(parent) = to.parent() {
             std::fs::create_dir_all(parent).map_err(CoreError::io(COPY, parent))?;
         }
@@ -426,8 +471,9 @@ fn back_up(backups: &Path, root: &Path, items: &[PathBuf]) -> Result<PathBuf> {
 }
 
 /// Compare the backup with what it was made from: the same number of files,
-/// and every file there with the length of its original.
-fn verify_backup(target: &Path, copies: &[(PathBuf, PathBuf, u64)]) -> Result<()> {
+/// and every file there with the SHA-256 of its original, read again from
+/// both places.
+fn verify_backup(target: &Path, copies: &[(PathBuf, PathBuf)]) -> Result<()> {
     let incomplete = || CoreError::BackupIncomplete {
         path: target.to_path_buf(),
     };
@@ -439,9 +485,9 @@ fn verify_backup(target: &Path, copies: &[(PathBuf, PathBuf, u64)]) -> Result<()
     if found != copies.len() {
         return Err(incomplete());
     }
-    for (copy, _, bytes) in copies {
-        let length = std::fs::metadata(copy).map_err(|_| incomplete())?.len();
-        if length != *bytes {
+    for (copy, original) in copies {
+        let copied = files::sha256_file(copy).map_err(|_| incomplete())?;
+        if copied != files::sha256_file(original)? {
             return Err(incomplete());
         }
     }
@@ -509,6 +555,9 @@ mod tests {
     #[test]
     fn the_proxy_dll_is_deleted_first_and_every_root_file_is_on_the_list() {
         assert_eq!(ROOT_FILES_IN_REMOVAL_ORDER[0], paths::WINHTTP);
+        for name in LOADER_FILES {
+            assert!(ROOT_FILES_IN_REMOVAL_ORDER[1..].contains(&name));
+        }
         let mut ours = ROOT_FILES_IN_REMOVAL_ORDER.to_vec();
         let mut theirs = manifest::ROOT_FILES.to_vec();
         ours.sort_unstable();
@@ -553,30 +602,34 @@ mod tests {
     #[test]
     fn a_backup_that_does_not_match_its_original_is_refused() {
         let (_temp, base) = canonical_temp();
-        let backup = base.join("backup");
-        put(&backup, "a.dll", b"1234");
-        put(&backup, "b.dll", b"12");
-        let copy = |name: &str, bytes: u64| (backup.join(name), base.join(name), bytes);
-        let refused = |copies: &[(PathBuf, PathBuf, u64)]| {
+        let (backup, game) = (base.join("backup"), base.join("game"));
+        for name in ["a.dll", "b.dll"] {
+            put(&game, name, name.as_bytes());
+            put(&backup, name, name.as_bytes());
+        }
+        put(&game, "c.dll", b"c.dll");
+        let copy = |name: &str| (backup.join(name), game.join(name));
+        let refused = |copies: &[(PathBuf, PathBuf)]| {
             matches!(
                 verify_backup(&backup, copies),
                 Err(CoreError::BackupIncomplete { .. })
             )
         };
 
-        assert!(verify_backup(&backup, &[copy("a.dll", 4), copy("b.dll", 2)]).is_ok());
+        assert!(verify_backup(&backup, &[copy("a.dll"), copy("b.dll")]).is_ok());
+        assert!(refused(&[copy("a.dll")]), "a file too many");
         assert!(
-            refused(&[copy("a.dll", 4), copy("b.dll", 3)]),
-            "a short file"
-        );
-        assert!(refused(&[copy("a.dll", 4)]), "a file too many");
-        assert!(
-            refused(&[copy("a.dll", 4), copy("b.dll", 2), copy("c.dll", 1)]),
+            refused(&[copy("a.dll"), copy("b.dll"), copy("c.dll")]),
             "a missing file"
         );
+        assert!(refused(&[copy("a.dll"), copy("c.dll")]), "another file");
+
+        put(&backup, "b.dll", b"b.d");
+        assert!(refused(&[copy("a.dll"), copy("b.dll")]), "a short file");
+        put(&backup, "b.dll", b"B.DLL");
         assert!(
-            refused(&[copy("a.dll", 4), copy("c.dll", 2)]),
-            "another file"
+            refused(&[copy("a.dll"), copy("b.dll")]),
+            "the same length with other bytes"
         );
     }
 

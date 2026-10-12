@@ -27,6 +27,15 @@ pub mod paths {
     /// The proxy DLL that makes the game load BepInEx. Written last on an
     /// install and deleted first on a removal.
     pub const WINHTTP: &str = "winhttp.dll";
+    /// Where an install of BepInEx is put together, inside the game folder
+    /// so that moving it into place is a rename: a copy that stops half way
+    /// stops in here, and the folder is deleted at the next start.
+    pub const INSTALL_PART: &str = "oamod-install.part";
+    /// The name [`INSTALL_PART`] gets once everything is in it. Its pieces
+    /// are then renamed into place, `winhttp.dll` last. While this folder
+    /// still holds `winhttp.dll`, the install did not finish, and whatever
+    /// is missing from it was moved into the game folder by the launcher.
+    pub const INSTALL_READY: &str = "oamod-install.ready";
     /// The settings of the loader, next to the proxy DLL.
     pub const DOORSTOP_CONFIG: &str = "doorstop_config.ini";
     /// The core assemblies of BepInEx.
