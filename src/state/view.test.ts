@@ -321,9 +321,9 @@ describe('Steam busy', () => {
 describe('the warnings', () => {
   const all: Warning[] = [
     { kind: 'game_build_untested', build: '20999999' },
-    { kind: 'foreign_bep_in_ex' },
+    { kind: 'foreign_bepinex' },
     { kind: 'slow_next_start' },
-    { kind: 'bep_in_ex_differs', installed: '6.0.0-be.788', wanted: '6.0.0-be.800' },
+    { kind: 'bepinex_differs', installed: '6.0.0-be.788', wanted: '6.0.0-be.800' },
   ];
 
   it('each one has a note of its own', () => {

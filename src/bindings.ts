@@ -321,14 +321,14 @@ export type Warning =
 /**  Steam's build id of the installed game. */
 build: string } | 
 /**  BepInEx in the game folder is a build the launcher does not know. */
-{ kind: "foreign_bep_in_ex" } | 
+{ kind: "foreign_bepinex" } | 
 /**  The game was updated, so the next start takes minutes again. */
 { kind: "slow_next_start" } | 
 /**
  *  The release names another BepInEx build than the installed one. The
  *  launcher keeps the installed build.
  */
-{ kind: "bep_in_ex_differs"; 
+{ kind: "bepinex_differs"; 
 /**  The label of the installed build. */
 installed: string; 
 /**  The label the release names. */

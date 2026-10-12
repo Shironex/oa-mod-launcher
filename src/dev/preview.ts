@@ -234,7 +234,7 @@ const PREVIEWS: Record<string, Preview> = {
       bepinex: { kind: 'foreign' },
       warnings: [
         { kind: 'game_build_untested', build: '20999999' },
-        { kind: 'foreign_bep_in_ex' },
+        { kind: 'foreign_bepinex' },
         { kind: 'slow_next_start' },
       ],
     },
@@ -243,7 +243,7 @@ const PREVIEWS: Record<string, Preview> = {
     ...QUIET,
     snapshot: {
       ...READY,
-      warnings: [{ kind: 'bep_in_ex_differs', installed: LABEL, wanted: '6.0.0-be.800' }],
+      warnings: [{ kind: 'bepinex_differs', installed: LABEL, wanted: '6.0.0-be.800' }],
     },
   },
   'steam-busy': {
@@ -298,7 +298,7 @@ const PREVIEWS: Record<string, Preview> = {
     snapshot: {
       ...WITH_GHOST_CADDY,
       bepinex: { kind: 'foreign' },
-      warnings: [{ kind: 'foreign_bep_in_ex' }],
+      warnings: [{ kind: 'foreign_bepinex' }],
     },
     dialog: 'remove',
     plan: PLAN_UNRECOGNISED,

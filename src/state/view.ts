@@ -633,7 +633,7 @@ export function warningNote(warning: Warning): NoteView {
         label: 'Untested',
         text: `OA Mod was not tried with this game build (${warning.build}). It may work anyway. If the game misbehaves, look for a newer OA Mod.`,
       };
-    case 'foreign_bep_in_ex':
+    case 'foreign_bepinex':
       return {
         label: 'Other BepInEx',
         text: 'The game folder has a BepInEx build this launcher does not know. OA Mod goes into it as it is, and the launcher never replaces it.',
@@ -643,7 +643,7 @@ export function warningNote(warning: Warning): NoteView {
         label: 'Slow start',
         text: 'The game was updated, so the next start takes a few minutes again while BepInEx rebuilds its files.',
       };
-    case 'bep_in_ex_differs':
+    case 'bepinex_differs':
       return {
         label: 'BepInEx',
         text: `The newest OA Mod names BepInEx ${warning.wanted}. This game has ${warning.installed}, and the launcher keeps it.`,

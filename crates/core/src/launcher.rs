@@ -293,11 +293,13 @@ pub enum Warning {
         build: String,
     },
     /// BepInEx in the game folder is a build the launcher does not know.
+    #[serde(rename = "foreign_bepinex")]
     ForeignBepInEx,
     /// The game was updated, so the next start takes minutes again.
     SlowNextStart,
     /// The release names another BepInEx build than the installed one. The
     /// launcher keeps the installed build.
+    #[serde(rename = "bepinex_differs")]
     BepInExDiffers {
         /// The label of the installed build.
         installed: String,
@@ -1075,6 +1077,17 @@ mod tests {
         })
         .expect("JSON");
         assert_eq!(warning["kind"], "game_build_untested");
+        // "BepInEx" is one word: `snake_case` alone would split it in three.
+        let kind = |warning: Warning| serde_json::to_value(warning).expect("JSON")["kind"].clone();
+        assert_eq!(kind(Warning::ForeignBepInEx), "foreign_bepinex");
+        assert_eq!(kind(Warning::SlowNextStart), "slow_next_start");
+        assert_eq!(
+            kind(Warning::BepInExDiffers {
+                installed: "a".to_owned(),
+                wanted: "b".to_owned(),
+            }),
+            "bepinex_differs"
+        );
         assert_eq!(
             serde_json::to_value(BepInEx::Absent).expect("JSON")["kind"],
             "absent"
