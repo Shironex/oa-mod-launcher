@@ -42,6 +42,6 @@ export default defineConfig(
     },
   },
   {
-    ignores: ['node_modules/**', 'dist/**', 'target/**', 'src-tauri/gen/**'],
+    ignores: ['node_modules/**', 'dist/**', 'target/**', 'src-tauri/gen/**', 'src/bindings.ts'],
   }
 );
