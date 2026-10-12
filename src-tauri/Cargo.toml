@@ -10,7 +10,7 @@ publish.workspace = true
 default-run = "oa-mod-launcher"
 
 [lib]
-# A library, so the shell can be tested without opening a window. The binary
+# A library, so the command list and the generated bindings can be tested without opening a window. The binary
 # is a three line entry point.
 name = "oa_mod_launcher_lib"
 crate-type = ["lib"]
@@ -19,7 +19,24 @@ crate-type = ["lib"]
 tauri-build = { workspace = true }
 
 [dependencies]
+oa-mod-launcher-core = { workspace = true, features = ["specta"] }
+serde = { workspace = true }
+# Named by the code `tauri::generate_context!` writes for the `plugins` part
+# of `tauri.conf.json`, so it has to be a dependency of this crate.
+serde_json = { workspace = true }
 tauri = { workspace = true }
+tauri-plugin-single-instance = { workspace = true }
+tauri-plugin-dialog = { workspace = true }
+tauri-plugin-updater = { workspace = true }
+rustls = { workspace = true }
+specta = { workspace = true }
+specta-typescript = { workspace = true }
+tauri-specta = { workspace = true }
+
+[dev-dependencies]
+# Tests only: check the updater key.
+minisign-verify = { workspace = true }
+base64 = { workspace = true }
 
 [lints]
 workspace = true

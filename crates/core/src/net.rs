@@ -23,9 +23,6 @@ use url::Url;
 use crate::error::{CoreError, Result};
 
 /// Where the manifest of the stable channel is published.
-// TODO(keys): the address is decided, but nothing is published there yet. It
-// is frozen into every installed launcher, so confirm it before the first
-// release.
 pub const DEFAULT_FEED: &str =
     "https://github.com/Shironex/oa-mod/releases/latest/download/manifest.json";
 

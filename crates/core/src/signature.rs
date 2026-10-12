@@ -21,30 +21,33 @@ use minisign_verify::{PublicKey, Signature};
 
 use crate::error::{CoreError, Result};
 
-/// The public keys a release build trusts: manifest-a, which signs every
-/// release, and manifest-b, the spare that is kept offline in case manifest-a
-/// is lost. Each is the content of a `.pub` file written by
-/// `pnpm tauri signer generate`. The private halves are not in the repository.
+/// The public keys a release build trusts: the one manifest key, which signs
+/// every release. It is the content of the `.pub` file written by
+/// `pnpm tauri signer generate`. The private half is not in the repository.
 ///
-/// An installed launcher trusts these two keys and no others, for as long as
-/// it is installed: a key can only be replaced by shipping a new launcher.
-// TODO(keys): placeholders. Neither string is a key, so a build made from this
-// tree trusts no manifest at all. Put the content of manifest-a.pub and
-// manifest-b.pub here once the keys exist, then delete the placeholder test
-// below and remove `#[ignore]` from `release_keys_are_real`.
-pub const RELEASE_KEYS: [&str; 2] = [
-    // manifest-a
-    "PLACEHOLDER: manifest-a public key",
-    // manifest-b
-    "PLACEHOLDER: manifest-b public key",
+/// There is no spare key. An installed launcher trusts this key and no other,
+/// for as long as it is installed: if the key is lost, everyone installs a new
+/// launcher by hand.
+pub const RELEASE_KEYS: [&str; 1] = [
+    "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlEQUYyODBFQzJEQUVFMkMKUldRczd0ckNEaWl2blpiNk1UMVZ3b3BXQk0wZnUzMW1hUDMxUEJxMkh5SHRhRWdabjdreDhOUGEK",
 ];
 
-/// The keys a normal start trusts: [`RELEASE_KEYS`].
-// TODO(keys): a development build will also trust the development key
-// (`dev-keys/dev.key.pub`, behind `cfg(debug_assertions)`) once that key is
-// generated. It signs local test manifests only.
+/// The public half of `dev-keys/dev.key`, the key that signs local test
+/// manifests. Its private half is committed with an empty password, so a
+/// signature by it proves nothing.
+///
+/// That is why the constant exists in a development build only: a release
+/// build has no way to trust it.
+#[cfg(debug_assertions)]
+const DEV_KEY: &str = include_str!("../../../dev-keys/dev.key.pub");
+
+/// The keys a normal start trusts: [`RELEASE_KEYS`], and in a development
+/// build also the development key.
 pub fn trusted_keys() -> Vec<String> {
-    RELEASE_KEYS.iter().copied().map(str::to_owned).collect()
+    let keys = RELEASE_KEYS.iter().copied();
+    #[cfg(debug_assertions)]
+    let keys = keys.chain([DEV_KEY.trim()]);
+    keys.map(str::to_owned).collect()
 }
 
 /// Check that `sig_text` is a signature over exactly `bytes` by one of
@@ -125,6 +128,17 @@ mod tests {
     use super::*;
 
     const MANIFEST: &[u8] = br#"{"schema":1,"version":"0.9.0"}"#;
+
+    /// The development public key, read by the tests themselves so that they
+    /// also run in a release build, where [`DEV_KEY`] does not exist.
+    const DEV_PUB: &str = include_str!("../../../dev-keys/dev.key.pub");
+
+    /// A file that `tauri signer sign -f dev-keys/dev.key` signed, and the
+    /// `.sig` it wrote. Made once with the real CLI, because the fixtures of
+    /// the other tests are signed by a library and prove only that this
+    /// library and the verifier agree.
+    const CLI_SIGNED: &[u8] = include_bytes!("../tests/data/signed-by-dev-key.json");
+    const CLI_SIGNATURE: &str = include_str!("../tests/data/signed-by-dev-key.json.sig");
 
     /// A throwaway key pair. Without a password, because the password only
     /// protects the private key on disk and is slow to apply.
@@ -295,23 +309,23 @@ mod tests {
         assert_eq!(signed_version("not a signature"), None);
     }
 
-    // TODO(keys): delete this test when the real keys are in `RELEASE_KEYS`.
     #[test]
-    fn the_placeholder_release_keys_trust_nothing() {
-        let pair = new_pair();
-        let signature = sign(&pair, MANIFEST);
+    fn a_signature_written_by_the_tauri_cli_is_accepted() {
+        assert_eq!(
+            matching_key(CLI_SIGNED, CLI_SIGNATURE, &[DEV_PUB]).ok(),
+            Some(0)
+        );
 
-        for key in RELEASE_KEYS {
-            assert!(minisign_text(key).is_none(), "{key} must not be a key");
-        }
-        assert!(verify(MANIFEST, &signature, &RELEASE_KEYS).is_err());
-        assert!(verify(MANIFEST, &signature, &trusted_keys()).is_err());
+        let mut changed = CLI_SIGNED.to_vec();
+        changed[2] ^= 1;
+        assert!(verify(&changed, CLI_SIGNATURE, &[DEV_PUB]).is_err());
+        assert!(
+            verify(CLI_SIGNED, CLI_SIGNATURE, &RELEASE_KEYS).is_err(),
+            "the development key signs nothing a release build accepts"
+        );
     }
 
-    // TODO(keys): also add back the tests of the development key and of a
-    // file signed by the real Tauri CLI, with a newly generated key.
     #[test]
-    #[ignore = "TODO(keys): RELEASE_KEYS holds placeholders until the keys exist"]
     fn release_keys_are_real() {
         for key in RELEASE_KEYS {
             let text = minisign_text(key).expect("a release key is base64 of the minisign text");
@@ -319,7 +333,27 @@ mod tests {
                 PublicKey::decode(&text).is_ok(),
                 "{key} is not a minisign public key"
             );
+            assert_ne!(key, DEV_PUB.trim(), "the development key is no release key");
         }
-        assert_ne!(RELEASE_KEYS[0], RELEASE_KEYS[1]);
+    }
+
+    #[test]
+    fn the_development_key_is_a_key_the_tauri_cli_wrote() {
+        let text = minisign_text(DEV_PUB).expect("dev.key.pub is base64 of the minisign text");
+        assert!(PublicKey::decode(&text).is_ok());
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn a_development_build_also_trusts_the_development_key() {
+        let keys = trusted_keys();
+        assert_eq!(keys[..1], RELEASE_KEYS);
+        assert_eq!(keys[1..], [DEV_PUB.trim()]);
+    }
+
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn a_release_build_trusts_the_release_keys_only() {
+        assert_eq!(trusted_keys(), RELEASE_KEYS);
     }
 }

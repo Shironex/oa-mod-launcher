@@ -92,7 +92,8 @@ pub fn steam_root() -> Result<PathBuf> {
 /// # Errors
 ///
 /// [`CoreError::GameNotFound`] when no library holds the game's manifest,
-/// [`CoreError::BadSteamFile`] when the manifest is there but cannot be used.
+/// [`CoreError::BadSteamFile`] when a manifest is there but cannot be used and
+/// no other library has a usable one.
 pub fn find_game(root: &Path) -> Result<Found> {
     let list = root.join("steamapps").join("libraryfolders.vdf");
     // A missing or damaged list is not an error: the root is still a library.
@@ -107,21 +108,32 @@ pub fn find_game(root: &Path) -> Result<Found> {
         .map(|library| library.0)
         .chain([root.to_path_buf()]);
 
+    // A manifest that cannot be used does not end the search: a leftover file
+    // in one library must not hide the game in the next. It is reported only
+    // when no library yields the game.
+    let mut first_bad = None;
     for library in candidates {
         let steamapps = library.join("steamapps");
         let manifest = steamapps.join(format!("appmanifest_{APP_ID}.acf"));
         if !manifest.is_file() {
             continue;
         }
-        let app = read_capped(&manifest)
-            .and_then(|text| app_manifest(&text).map_err(|reason| bad_file(&manifest, &reason)))?;
-        return Ok(Found {
-            dir: steamapps.join("common").join(app.install_dir),
-            build_id: app.build_id,
-            state_flags: app.state_flags,
-        });
+        match read_capped(&manifest)
+            .and_then(|text| app_manifest(&text).map_err(|reason| bad_file(&manifest, &reason)))
+        {
+            Ok(app) => {
+                return Ok(Found {
+                    dir: steamapps.join("common").join(app.install_dir),
+                    build_id: app.build_id,
+                    state_flags: app.state_flags,
+                });
+            }
+            Err(error) => {
+                first_bad.get_or_insert(error);
+            }
+        }
     }
-    Err(CoreError::GameNotFound)
+    Err(first_bad.unwrap_or(CoreError::GameNotFound))
 }
 
 fn bad_file(path: &Path, reason: &str) -> CoreError {
@@ -220,9 +232,14 @@ fn app_manifest(text: &str) -> std::result::Result<AppManifest, String> {
 /// library path, so a separator, a drive letter or a `..` would point the
 /// launcher at a folder Steam never named. Both kinds of slash are refused on
 /// every system. A name Windows would quietly alter (a trailing dot or space)
-/// is refused too, because it would not name the folder it spells.
-fn is_bare_name(name: &str) -> bool {
+/// is refused too, because it would not name the folder it spells, and so is
+/// a device name (`CON`, `NUL`, `COM1` and the like, with or without an
+/// extension), which Windows never opens as a file.
+///
+/// The same rule judges every part of an entry name of a downloaded zip.
+pub(crate) fn is_bare_name(name: &str) -> bool {
     !name.is_empty()
+        && !is_device_name(name)
         && name != "."
         && name != ".."
         && !name.ends_with(['.', ' '])
@@ -230,6 +247,27 @@ fn is_bare_name(name: &str) -> bool {
         && !name.chars().any(|c| {
             c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
         })
+}
+
+/// Whether Windows reads `name` as a device: the part before the first dot,
+/// without trailing spaces and in any case, is one of the reserved names.
+fn is_device_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name).trim_end_matches(' ');
+    let stem = stem.to_ascii_uppercase();
+    let numbered = |prefix: &str| {
+        stem.strip_prefix(prefix).is_some_and(|rest| {
+            let mut rest = rest.chars();
+            matches!(
+                (rest.next(), rest.next()),
+                (Some('0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None)
+            )
+        })
+    };
+    matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || numbered("COM")
+        || numbered("LPT")
 }
 
 /// One value of Valve's key and value text format.
@@ -512,6 +550,10 @@ mod tests {
             " Golf",
             "Golf\\nWith",
             "Golf|With",
+            "CON",
+            "nul.d",
+            "COM1",
+            "lpt9",
         ] {
             let result = app_manifest(&manifest_text(hostile));
             assert!(

@@ -19,6 +19,7 @@
         "minHeight": 700,
         "resizable": true,
         "center": true,
+        "decorations": false,
         "backgroundColor": "#f1f8ec"
       }
     ],
@@ -30,6 +31,10 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
+    "resources": {
+      "../THIRD-PARTY-NOTICES.txt": "THIRD-PARTY-NOTICES.txt"
+    },
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
     "publisher": "Shironex",
     "category": "Utility",
@@ -40,6 +45,18 @@
         "installMode": "currentUser",
         "displayLanguageSelector": false,
         "languages": ["English"]
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEEyMUUyREU5OTk2MkU1MzMKUldRejVXS1o2UzBlb2xrLzhCQjMyZUlSNHhjV1hoMVN3YVppczFHV251Tjkvd2tncW55cHJERDAK",
+      "endpoints": [
+        "https://github.com/Shironex/oa-mod-launcher/releases/latest/download/latest.json"
+      ],
+      "requireSignedVersion": true,
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

@@ -1,7 +1,11 @@
-# The local checks, on every push to main and every pull request.
+# The checks of docs/development.md, on every push to main and every pull
+# request. On main it also builds the installer the way a release does, signed
+# with the development key from the repository, so the release build is proven
+# without a secret. That installer is NOT a release: no installed launcher
+# accepts the development key.
 #
 # No job here sees a secret. Actions are pinned to a commit, with the version
-# in a comment.
+# in a comment, and Dependabot raises the pins.
 
 name: ci
 
@@ -96,6 +100,9 @@ jobs:
       - name: Page tests
         run: pnpm test
 
+      - name: Script tests
+        run: pnpm test:scripts
+
       - name: Rust format check
         run: cargo fmt --all -- --check
 
@@ -104,3 +111,64 @@ jobs:
 
       - name: Rust tests
         run: cargo test --workspace --locked
+
+  dev-installer:
+    name: Installer signed with the DEV key
+    # Not on pull requests: the build takes long and proves nothing a pull
+    # request needs before it is merged.
+    if: github.event_name == 'push'
+    needs: checks
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Set up pnpm
+        run: corepack enable
+
+      - name: Set up Rust
+        run: rustup toolchain install --no-self-update
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # The development key is in the repository with an empty password, so
+      # this is no secret. The CLI warns that the key does not match the one
+      # in tauri.conf.json; that is expected here.
+      - name: Build the installer, signed with the development key
+        env:
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+        run: |
+          TAURI_SIGNING_PRIVATE_KEY="$(tr -d '\r\n' < dev-keys/dev.key)" \
+            pnpm tauri build --bundles nsis --ci -- --locked
+
+      # The same two steps the publish job of the release workflow runs, with
+      # the development public key in place of the one in tauri.conf.json.
+      - name: Check the signature and write latest.json
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          installer="$(ls target/release/bundle/nsis/*-setup.exe)"
+          cargo run --locked -p oa-mod-launcher-core --example verify_file -- \
+            "$installer" --pubkey "$(cat dev-keys/dev.key.pub)" --version "$version"
+          node scripts/build-latest.mjs \
+            --bundle target/release/bundle/nsis \
+            --version "$version" \
+            --repo "$GITHUB_REPOSITORY" \
+            --out dev-installer \
+            --notes "Signed with the development key. Not a release."
+
+      - name: Upload the installer
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: DEV-KEY-NOT-A-RELEASE-launcher-installer
+          path: dev-installer/
+          if-no-files-found: error
+          retention-days: 7

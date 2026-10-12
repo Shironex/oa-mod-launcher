@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "version": "0.1.0",
+  "published": "2026-10-20T18:00:00Z",
+  "notes": "The first public build.",
+  "mod": {
+    "url": "https://github.com/Shironex/oa-mod/releases/download/v0.1.0/OaMod-0.1.0.dll",
+    "size": 14,
+    "sha256": "57d23bf90439afc8e9222eaa512a0b02d8616857703d5d357016742c01a6adb3"
+  },
+  "bepinex": {
+    "label": "6.0.0-be.788",
+    "url": "https://github.com/Shironex/oa-mod/releases/download/bepinex-6.0.0-be.788/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.788.zip",
+    "size": 34336405,
+    "sha256": "f4cc496bd098a0df4164b81e3737297707f13a47c2478dba2f60eefab784817a",
+    "probe_sha256": "ba9c736f19e7f60b7f6764adb0b7908c0a2b394e09b6c09863528c7f2bc86095",
+    "root_files": {
+      "winhttp.dll": "bf5d99b5c9ae7b43146898d0fc30f8bba698803a48b759e80ff61e22574178f7",
+      "doorstop_config.ini": "9623726004fe88cb07b4b7920e02fef131f48ae22d72137fac5be990de5338c0",
+      ".doorstop_version": "22899070e6fa48dab26db287395cfaee4f097b6fee77d6fdba374c1a383d23ae",
+      "changelog.txt": "b40cd67182487ef24807d9c9268329d35fbd96aa2b0a9cae69e2e0d746b1c666"
+    }
+  },
+  "game": {
+    "builds": [
+      "20236533",
+      "20240000"
+    ]
+  },
+  "launcher": {
+    "min": "0.1.0"
+  }
+}
