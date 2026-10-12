@@ -561,3 +561,19 @@ async fn a_launcher_that_lost_its_state_adopts_what_it_installed_before() {
         Owner::Adopted
     );
 }
+
+/// The shell shares one launcher between its commands and awaits these steps
+/// from async commands, which may move between threads. Compiling is the
+/// test: the futures are made and dropped without being run.
+#[test]
+fn the_launcher_is_shared_and_its_async_steps_move_between_threads() {
+    fn is_send<T: Send>(_: T) {}
+    fn is_shared<T: Send + Sync>() {}
+
+    let sandbox = Sandbox::new();
+    let launcher = Launcher::open(sandbox.config_offline()).expect("the launcher opens");
+
+    is_shared::<Launcher>();
+    is_send(launcher.install(&quiet));
+    is_send(launcher.check());
+}
