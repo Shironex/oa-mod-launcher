@@ -106,7 +106,9 @@ The launcher unpacks the zip into its own staging folder and refuses it unless:
 
 - its top level holds nothing but `BepInEx/`, `dotnet/` and the four root files, and all four are there;
 - `BepInEx/core/BepInEx.Unity.IL2CPP.dll` hashes to `probe_sha256` and each root file to its entry in `root_files`;
-- no entry is absolute, has a drive letter or a `..` part, or is a symbolic link.
+- no entry is absolute, has a drive letter or a `..` part, or is a symbolic link;
+- no part of an entry name is one Windows would rewrite: a trailing dot or space, or a device name (`CON`, `PRN`, `AUX`, `NUL`, `COM0` to `COM9`, `LPT0` to `LPT9`, with or without an extension);
+- it holds at most 20 000 entries and unpacks to at most 2 GB, counted both by the sizes it declares and by the bytes that are written.
 
 ## The `.sig` format
 
