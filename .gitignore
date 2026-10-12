@@ -10,3 +10,7 @@ src-tauri/gen/
 
 # Signing keys never enter the repository.
 *.key
+
+# The one exception is the development key: it has an empty password, is
+# public on purpose and signs local test files only.
+!dev-keys/dev.key
