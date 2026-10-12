@@ -474,8 +474,6 @@ body {
     min-height: 0;
     overflow-y: auto;
     padding-bottom: calc(6 * var(--u));
-    scrollbar-width: thin;
-    scrollbar-color: var(--color-rule) transparent;
   }
   .note {
     font-size: calc(15 * var(--u));
@@ -559,6 +557,15 @@ body {
   .help.tight {
     font-size: calc(15 * var(--u));
     line-height: calc(24 * var(--u));
+  }
+
+  /* What scrolls when a state has more to say than fits, scrolls quietly. */
+  .notes,
+  .dl,
+  .m-main,
+  .modal.solo {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-rule) transparent;
   }
 
   /* ---- dialogs ------------------------------------------------------------- */
@@ -803,7 +810,7 @@ body {
   }
   .dl li {
     display: grid;
-    grid-template-columns: calc(380 * var(--u)) minmax(0, 1fr);
+    grid-template-columns: calc(330 * var(--u)) minmax(0, 1fr);
     gap: calc(10 * var(--u));
   }
   .dl li b {

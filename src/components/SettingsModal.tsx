@@ -155,25 +155,22 @@ export function SettingsModal({ section, snapshot, locked, canRemove, error }: S
             </div>
             <div className="m-row">
               <div>
-                <b>Launcher log</b>
+                <b>Log and backups</b>
                 <span>
-                  One line per thing the launcher did. The file to send when something fails.
+                  The log has one line per thing the launcher did: the file to send when something
+                  fails. The backups hold other plugins, copied before a full removal.
                 </span>
               </div>
-              <button type="button" className="sbtn" onClick={() => void openFolder('logs')}>
-                <Icon name="folder" />
-                Open folder
-              </button>
-            </div>
-            <div className="m-row">
-              <div>
-                <b>Backups</b>
-                <span>Other plugins and their settings, copied here before a full removal.</span>
-              </div>
-              <button type="button" className="sbtn" onClick={() => void openFolder('backups')}>
-                <Icon name="folder" />
-                Open folder
-              </button>
+              <span className="side">
+                <button type="button" className="sbtn" onClick={() => void openFolder('logs')}>
+                  <Icon name="folder" />
+                  Open log folder
+                </button>
+                <button type="button" className="sbtn" onClick={() => void openFolder('backups')}>
+                  <Icon name="folder" />
+                  Open backups
+                </button>
+              </span>
             </div>
             <div className="m-row">
               <div>
