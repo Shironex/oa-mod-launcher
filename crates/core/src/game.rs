@@ -207,8 +207,9 @@ mod tests {
     }
 
     /// What Windows does for a running program is stood in for by a handle
-    /// that shares the file for reading only, which is how the loader holds
-    /// an executable.
+    /// that shares the file for reading only. That is the effect, not the
+    /// mechanism: a running program is held as a mapped image and no handle,
+    /// and a test cannot make one of those without starting a program.
     #[test]
     #[cfg(windows)]
     fn an_exe_that_is_held_open_reads_as_running() {
