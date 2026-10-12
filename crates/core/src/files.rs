@@ -6,7 +6,16 @@
 //! - A path is built by [`inside`] only: a relative path joined to a root
 //!   that was made canonical before, checked to stay under it.
 //! - No part of such a path may be a reparse point (a junction or a symbolic
-//!   link). The launcher never follows one and never deletes through one.
+//!   link) when it is looked at: a path with one is refused, and so is a tree
+//!   with one anywhere in it.
+//!
+//! What this does not give: the look and the delete are two steps, and
+//! Windows offers no way in the standard library to make them one. Another
+//! program that swaps a folder for a link in between is not shut out. The
+//! window is kept small instead: [`delete_tree`] looks again at every folder
+//! between the top of the tree and an entry right before it deletes that
+//! entry, and [`delete_file`] looks at the entry itself. Every reparse point
+//! is refused, whatever its kind, not only the ones that are links by name.
 
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -256,7 +265,10 @@ fn scan_into(dir: &Path, tree: &mut Tree) -> Result<()> {
 ///
 /// `dir` must come from [`inside`]. The tree is scanned first, so a reparse
 /// point anywhere in it refuses the delete before a single file is gone. Each
-/// entry is then deleted by its own path: files first, folders deepest first.
+/// entry is then deleted by its own path, children before their folder: files
+/// first, folders deepest first. Right before each delete, every folder from
+/// `dir` down to that entry is looked at again, and the delete stops when one
+/// of them has become a link since the scan.
 pub fn delete_tree(dir: &Path) -> Result<bool> {
     let metadata = match std::fs::symlink_metadata(dir) {
         Ok(metadata) => metadata,
@@ -270,10 +282,18 @@ pub fn delete_tree(dir: &Path) -> Result<bool> {
         return Err(unsafe_path(dir, "a file is where a folder was expected"));
     }
     let tree = scan_tree(dir)?;
+    delete_scanned(dir, &tree)?;
+    Ok(true)
+}
+
+/// Delete what a scan of `dir` found, and `dir` itself.
+fn delete_scanned(dir: &Path, tree: &Tree) -> Result<()> {
     for (file, _) in &tree.files {
+        still_plain(dir, file)?;
         delete_file(file)?;
     }
     for folder in tree.dirs.iter().rev().chain([&dir.to_path_buf()]) {
+        still_plain(dir, folder)?;
         // `remove_dir` only removes an empty folder and never follows a link,
         // so even a folder swapped for a junction in the meantime costs the
         // link and not what it points at.
@@ -283,7 +303,34 @@ pub fn delete_tree(dir: &Path) -> Result<bool> {
             Err(error) => return Err(write_error("delete the folder", folder)(error)),
         }
     }
-    Ok(true)
+    Ok(())
+}
+
+/// Look again at every folder from `top` down to the one that holds `path`:
+/// each must still be a folder and not a link. One that is gone is fine, the
+/// entry below it is gone with it.
+fn still_plain(top: &Path, path: &Path) -> Result<()> {
+    let below = path
+        .strip_prefix(top)
+        .map_err(|_| unsafe_path(path, "it is not below the folder"))?;
+    let check = |folder: &Path| match std::fs::symlink_metadata(folder) {
+        Ok(metadata) if is_reparse_point(&metadata) => {
+            Err(unsafe_path(folder, "it is a link to somewhere else"))
+        }
+        Ok(metadata) if !metadata.is_dir() => {
+            Err(unsafe_path(folder, "a file is where a folder was expected"))
+        }
+        _ => Ok(()),
+    };
+    let mut folder = top.to_path_buf();
+    check(&folder)?;
+    // Not the last part: that is the entry itself, which its own delete
+    // looks at.
+    for part in below.parent().into_iter().flat_map(Path::components) {
+        folder.push(part);
+        check(&folder)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -458,6 +505,42 @@ pub(crate) mod tests {
             Err(CoreError::UnsafePath { .. })
         ));
         assert!(elsewhere.join("precious.txt").exists());
+    }
+
+    #[test]
+    fn a_folder_swapped_for_a_link_after_the_scan_is_not_deleted_through() {
+        let (_temp, root) = canonical_temp();
+        let dir = root.join("BepInEx");
+        let elsewhere = root.join("elsewhere");
+        // The same names below both, so a delete by full path would find a
+        // plain file at the end of the path either way.
+        for base in [dir.join("plugins"), elsewhere.clone()] {
+            std::fs::create_dir_all(base.join("deep")).expect("folders");
+            std::fs::write(base.join("deep").join("precious.txt"), b"keep").expect("a file");
+            std::fs::create_dir_all(base.join("empty")).expect("an empty folder");
+        }
+        std::fs::write(dir.join("a.dll"), b"a").expect("a file");
+
+        let tree = scan_tree(&dir).expect("the scan finds no link");
+        // Between the scan and the delete, somebody swaps a folder for a
+        // link to another place.
+        std::fs::remove_dir_all(dir.join("plugins")).expect("remove the folder");
+        link_dir(&elsewhere, &dir.join("plugins"));
+
+        let result = delete_scanned(&dir, &tree);
+
+        assert!(
+            matches!(result, Err(CoreError::UnsafePath { .. })),
+            "{result:?}"
+        );
+        assert!(
+            elsewhere.join("deep").join("precious.txt").is_file(),
+            "a file behind the link survives"
+        );
+        assert!(
+            elsewhere.join("empty").is_dir(),
+            "and so does an empty folder behind it"
+        );
     }
 
     #[test]
